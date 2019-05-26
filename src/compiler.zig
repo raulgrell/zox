@@ -42,17 +42,17 @@ pub const Parser = struct {
         if (self.had_panic) return;
         self.had_panic = true;
 
-        (&vm.output_stream.stream).print("[line {}] Error", token.line) catch unreachable;
+        vm.output_stream.stream.print("[line {}] Error", token.line) catch unreachable;
 
         if (token.token_type == TokenType.EOF) {
-            (&vm.output_stream.stream).print(" at end") catch unreachable;
+            vm.output_stream.stream.print(" at end") catch unreachable;
         } else if (token.token_type == TokenType.Error) {
             // Nothing.
         } else {
-            (&vm.output_stream.stream).print(" at '{}'", token.lexeme) catch unreachable;
+            vm.output_stream.stream.print(" at '{}'", token.lexeme) catch unreachable;
         }
 
-        (&vm.output_stream.stream).print(": {}\n", message) catch unreachable;
+        vm.output_stream.stream.print(": {}\n", message) catch unreachable;
         self.had_error = true;
     }
 };

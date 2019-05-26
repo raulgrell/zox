@@ -12,6 +12,9 @@ const ObjString = @import("./object.zig").ObjString;
 
 const verbose = false;
 
+var output_buffer: std.Buffer = undefined;
+var stdout: std.io.BufferOutStream = undefined;
+
 pub const OpCode = enum(u8) {
     // Literals
     Constant, Nil, True, False,
@@ -35,12 +38,12 @@ pub const VM = struct {
     strings: std.HashMap([]const u8, *Obj, ObjString.hashFn, ObjString.eqlFn),
     globals: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
     objects: ?*Obj,
-    output: std.Buffer,
-    output_stream: std.io.BufferOutStream,
+    output: *std.Buffer,
+    output_stream: *std.io.BufferOutStream,
 
     pub fn create(compiler: *Compiler) VM {
-        var output = std.Buffer.initSize(allocator, 0) catch unreachable;
-        var output_stream = std.io.BufferOutStream.init(&output);
+        output_buffer = std.Buffer.initSize(allocator, 0) catch unreachable;
+        stdout = std.io.BufferOutStream.init(&output_buffer);
         return VM {
             .instance = Instance.create(compiler),
             .chunk = undefined,
@@ -49,8 +52,8 @@ pub const VM = struct {
             .strings = std.HashMap([]const u8, *Obj, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .globals = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .objects = null,
-            .output = output,
-            .output_stream = output_stream
+            .output = &output_buffer,
+            .output_stream = &stdout,
         };
     }
 
@@ -59,8 +62,8 @@ pub const VM = struct {
         while(true) {
             std.debug.warn( "> ");
             const source = try std.io.readLineSlice(line[0..]);
-            std.debug.warn("\n");
             vm.interpret(source) catch {};
+            vm.flush();
         }
     }
 
@@ -76,9 +79,9 @@ pub const VM = struct {
 
         try self.instance.compile(source, &chunk);
 
+        self.resetStack();
         self.chunk = &chunk;
         self.ip = self.chunk.code.items.ptr;
-        self.resetStack();
 
         try self.run();
     }
@@ -97,9 +100,9 @@ pub const VM = struct {
     }
 
     fn readShort(self: *VM) u16 {
-        const short = @intCast(u16, self.ip[0]) << 8 | self.ip[1];
+        const value = @intCast(u16, self.ip[0]) << 8 | self.ip[1];
         self.ip += 2;
-        return short;
+        return value;
     }
 
     fn readConstant(self: *VM) Value {
@@ -129,19 +132,19 @@ pub const VM = struct {
     fn runtimeError(self: *VM, comptime format: []const u8, args: ...) void {
         const instruction = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr);
         const line = self.chunk.getLine(instruction);
-        (&self.output_stream.stream).print("Runtime error on line {}: ", line) catch unreachable;
-        (&self.output_stream.stream).print(format, args) catch unreachable;
-        (&self.output_stream.stream).print("\n") catch unreachable;
+        self.output_stream.stream.print("Runtime error on line {}: ", line) catch unreachable;
+        self.output_stream.stream.print(format, args) catch unreachable;
+        self.output_stream.stream.print("\n") catch unreachable;
         self.resetStack();
     }
 
     fn printDebug(self: *VM) void {
         const instruction = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr);
         for (self.stack.toSlice()) | s, i | {
-            (&self.output_stream.stream).print("[{}]\n", s.toString());
+            self.output_stream.stream.print("[{}]\n", s.toString());
         }
         _ = self.chunk.disassembleInstruction(instruction);
-        (&self.output_stream.stream).print("\n");
+        self.output_stream.stream.print("\n");
     }
 
     fn binary(self: *VM, value_type: ValueType, operator: OpCode) !void {

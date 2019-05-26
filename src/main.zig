@@ -54,8 +54,7 @@ pub export fn _wasm_main(input_ptr: [*]const u8, input_len: usize, output_ptr: *
     defer instance.destroy();
 
     vm = &instance;
-
-    vm.interpret(input) catch return false;
+    vm.interpret(input) catch {};
 
     const slice = vm.output.toSliceConst();
     var output = allocator.alloc(u8, slice.len) catch return false;
