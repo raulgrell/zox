@@ -54,6 +54,10 @@ pub const ObjString = struct {
     }
 };
 
+pub const ObjFn = struct {
+
+};
+
 pub const Obj = struct {
     data: Data,
     next: ?*Obj,

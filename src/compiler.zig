@@ -3,6 +3,7 @@ const std = @import("std");
 const allocator = @import("./main.zig").allocator;
 
 const Chunk = @import("./chunk.zig").Chunk;
+const VM = @import("./vm.zig").VM;
 const OpCode = @import("./vm.zig").OpCode;
 const Token = @import("./scanner.zig").Token;
 const TokenType = @import("./scanner.zig").TokenType;
@@ -11,6 +12,8 @@ const Value = @import("./value.zig").Value;
 const ObjString = @import("./object.zig").ObjString;
 
 const verbose = false;
+
+extern var vm: *VM;
 
 pub const Parser = struct {
     current: Token,
@@ -39,17 +42,17 @@ pub const Parser = struct {
         if (self.had_panic) return;
         self.had_panic = true;
 
-        //std.debug.warn("[line {}] Error", token.line);
+        (&vm.output_stream.stream).print("[line {}] Error", token.line) catch unreachable;
 
         if (token.token_type == TokenType.EOF) {
-            //std.debug.warn(" at end");
+            (&vm.output_stream.stream).print(" at end") catch unreachable;
         } else if (token.token_type == TokenType.Error) {
             // Nothing.
         } else {
-            //std.debug.warn(" at '{}'", token.lexeme);
+            (&vm.output_stream.stream).print(" at '{}'", token.lexeme) catch unreachable;
         }
 
-        //std.debug.warn(": {}\n", message);
+        (&vm.output_stream.stream).print(": {}\n", message) catch unreachable;
         self.had_error = true;
     }
 };
@@ -94,6 +97,11 @@ fn makeRule(_: TokenType, prefix: ?ParseFn, infix: ?ParseFn, precedence: Precede
 
 const num_rules = @memberCount(TokenType);
 var rules: [num_rules]ParseRule = undefined;
+
+const FunctionType = enum {
+    Function,
+    TopLevel
+};
 
 pub const Instance = struct {
     current: *Compiler,

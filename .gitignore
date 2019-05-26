@@ -1,10 +1,13 @@
 // Build artifacts
 zig-cache/
-*.o
 *.exe
 *.obj
 *.pdb
 *.def
 *.lib
+
+*.a
+*.h
+*.o
 
 main

@@ -9,16 +9,18 @@ pub const ValueType = enum {
   Nil,
 };
 
+var buffer = []u8 {0} ** 1024;
+
 pub const Value = union(ValueType) {
     Bool: bool,
     Number: f64,
     Obj: *Obj,
     Nil,
 
-    fn toString(value: Value, buffer: []u8) []const u8 {
+    fn toString(value: Value) []const u8 {
       switch (value) {
-        .Bool => |b| return std.fmt.bufPrint(buffer, "{}", b) catch unreachable,
-        .Number => |n|  return std.fmt.bufPrint(buffer, "{}", n) catch unreachable,
+        .Bool => |b| return std.fmt.bufPrint(buffer[0..], "{}", b) catch unreachable,
+        .Number => |n|  return std.fmt.bufPrint(buffer[0..], "{}", n) catch unreachable,
         .Obj => |o| return o.toString(),
         .Nil => return "nil",
       }

@@ -36,6 +36,7 @@ pub const VM = struct {
     globals: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
     objects: ?*Obj,
     output: std.Buffer,
+    output_stream: std.io.BufferOutStream,
 
     pub fn create(compiler: *Compiler) VM {
         var output = std.Buffer.initSize(allocator, 0) catch unreachable;
@@ -49,6 +50,7 @@ pub const VM = struct {
             .globals = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .objects = null,
             .output = output,
+            .output_stream = output_stream
         };
     }
 
@@ -58,7 +60,7 @@ pub const VM = struct {
             std.debug.warn( "> ");
             const source = try std.io.readLineSlice(line[0..]);
             std.debug.warn("\n");
-            try vm.interpret(source);
+            vm.interpret(source) catch {};
         }
     }
 
@@ -124,18 +126,22 @@ pub const VM = struct {
         self.stack.resize(0) catch unreachable;
     }
 
-    fn runtimeError(self: *VM, format: []const u8, args: ...) void {
+    fn runtimeError(self: *VM, comptime format: []const u8, args: ...) void {
         const instruction = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr);
-        //std.debug.warn("[line {}] in script\n", self.chunk.lines.at(instruction));
+        const line = self.chunk.getLine(instruction);
+        (&self.output_stream.stream).print("Runtime error on line {}: ", line) catch unreachable;
+        (&self.output_stream.stream).print(format, args) catch unreachable;
+        (&self.output_stream.stream).print("\n") catch unreachable;
         self.resetStack();
     }
 
     fn printDebug(self: *VM) void {
-        //std.debug.warn("\n");
+        const instruction = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr);
         for (self.stack.toSlice()) | s, i | {
-            //std.debug.warn("[{}]\n", s.toString());
+            (&self.output_stream.stream).print("[{}]\n", s.toString());
         }
-        _ = self.chunk.disassembleInstruction(@ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr));
+        _ = self.chunk.disassembleInstruction(instruction);
+        (&self.output_stream.stream).print("\n");
     }
 
     fn binary(self: *VM, value_type: ValueType, operator: OpCode) !void {
@@ -309,17 +315,15 @@ pub const VM = struct {
                     return;
                 },
                 else => {
-                    //std.debug.warn("Unknown instruction");
+                    self.runtimeError("Unknown instruction");
                     return error.CompileError;
                 }
             }
         }
     }
 
-    var buffer = []u8 {0} ** 1024;
-    
     pub fn print(self:*VM, value: Value) void {
-        const string = value.toString(buffer[0..]);
+        const string = value.toString();
         self.output.append(string) catch unreachable;
     }
 
@@ -328,7 +332,7 @@ pub const VM = struct {
     }
 
     pub fn flush(self:*VM) void {
-        //std.debug.warn("{}", self.output.toSliceConst());
+        std.debug.warn("{}\n", self.output.toSliceConst());
     }
 
     pub fn freeObjects(self: *VM) void {
