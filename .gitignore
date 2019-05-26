@@ -1,1 +1,9 @@
+// Build artifacts
 zig-cache/
+*.exe
+*.obj
+*.pdb
+*.def
+*.lib
+
+lang

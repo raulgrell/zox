@@ -47,6 +47,21 @@ pub const VM = struct {
         };
     }
 
+    fn runRepl(vm: *VM) !void {
+        var line = []const u8 {0} ** 256;
+        while(true) {
+            std.debug.warn( "> ");
+            const source = try std.io.readLineSlice(line[0..]);
+            std.debug.warn("\n");
+            try vm.interpret(source);
+        }
+    }
+
+    fn runFile(vm: *VM, path: []const u8) !void {
+        const source = try std.io.readFileAlloc(allocator, path);
+        const result = try vm.interpret(source);
+    }
+
     fn interpret(self: *VM, source: []const u8) !void {
         var chunk = Chunk.init();
         defer chunk.deinit();
