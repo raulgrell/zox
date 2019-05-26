@@ -5,15 +5,92 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
-    <title>zig fmt</title>
+    <title>Zox</title>
     <style>
-        textarea {
-            font-family: monospace;
+        * {
+            box-sizing: border-box;
+        }
+
+        html {
+            background-color: #000;
+            font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
+            color: #FFF;
+            height: 100%;
+            padding: 0;
+            margin: 0;
+        }
+
+        body {
+            height: 100%;
+            min-height: 100%;
+            padding: 0;
+            margin: 0;
+        }
+
+        a:visited {
+            color: white;
+        }
+
+        .page {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100%;
+        }
+
+        .container {
+            width: 1000px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: row;
+        }
+
+        .col {
+            width: 50%;
+            display: inline-block;
+        }
+
+        textarea#source {
+            width: 100%;
+            height: 50vh;
+            resize: vertical;
+        }
+
+        div#result {
+            padding: 1.6em;
         }
     </style>
 </head>
 
 <body>
+
+    <div class="page">
+        <h1>Zox - Zig implementation of Lox</h1>
+        <p>A simple bytecode interpreted language based on <a href="https://craftinginterpreters.com/">Crafting
+                Interpreters</a>
+            and <a href="https://github.com/shritesh/zigfmt-web">zigfmt-web</a></p>
+        <div class="container">
+            <div class="col">
+                <button id="evaluate" disabled>Evaluate</button>
+                <textarea id="source">
+{
+    var x = 0;
+    
+    while (x < 5) {
+        x = x + 1;
+        print x;
+    }
+}
+</textarea>
+            </div>
+            <div class="col">
+                <div id="result">
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const format = function (source) {
             // convert source to Uint8Array
@@ -37,7 +114,7 @@
             }
 
             // call function
-            const succeed = this.format_export(ptr + return_len, source_len, ptr, ptr + (32 / 8));
+            const succeed = this._wasm_main(ptr + return_len, source_len, ptr, ptr + (32 / 8));
 
             // read result into Uint32Array()
             const return_slice = new Uint32Array(this.memory.buffer.slice(ptr, ptr + return_len));
@@ -63,19 +140,20 @@
             return textDecoder.decode(result);
         };
 
-        fetch('fmt.wasm')
+        fetch('main.wasm')
             .then(response => response.arrayBuffer())
             .then(bytes => WebAssembly.instantiate(bytes, {}))
             .then(result => {
                 const fmt = format.bind(result.instance.exports);
 
-                const button = document.querySelector('button');
+                const button = document.getElementById('evaluate');
                 button.disabled = false;
 
                 button.onclick = function (e) {
-                    const textArea = document.querySelector('textarea');
-                    const result = fmt(textArea.value);
-                    textArea.value = result;
+                    const source_div = document.getElementById('source');
+                    const result_div = document.getElementById('result');
+                    const result = fmt(source_div.value);
+                    result_div.innerText = result;
                 };
             });
     </script>

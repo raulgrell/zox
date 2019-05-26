@@ -1,5 +1,6 @@
 const std = @import("std");
-const allocator = std.debug.global_allocator;
+
+const allocator = @import("./main.zig").allocator;
 
 const VM = @import("vm.zig").VM;
 const Value = @import("value.zig").Value;
@@ -70,8 +71,6 @@ pub const Obj = struct {
             .String => |s| return s.bytes,
         }
     }
-
-
 
     fn equal(self: *Obj, other: *Obj) bool {
         switch(self.data) {

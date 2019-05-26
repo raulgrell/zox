@@ -1,5 +1,6 @@
 const std = @import("std");
-const allocator = std.debug.global_allocator;
+
+const allocator = @import("./main.zig").allocator;
 
 const Chunk = @import("./chunk.zig").Chunk;
 const OpCode = @import("./vm.zig").OpCode;
@@ -38,17 +39,17 @@ pub const Parser = struct {
         if (self.had_panic) return;
         self.had_panic = true;
 
-        std.debug.warn("[line {}] Error", token.line);
+        //std.debug.warn("[line {}] Error", token.line);
 
         if (token.token_type == TokenType.EOF) {
-            std.debug.warn(" at end");
+            //std.debug.warn(" at end");
         } else if (token.token_type == TokenType.Error) {
             // Nothing.
         } else {
-            std.debug.warn(" at '{}'", token.lexeme);
+            //std.debug.warn(" at '{}'", token.lexeme);
         }
 
-        std.debug.warn(": {}\n", message);
+        //std.debug.warn(": {}\n", message);
         self.had_error = true;
     }
 };

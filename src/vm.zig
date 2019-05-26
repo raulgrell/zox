@@ -1,5 +1,6 @@
 const std = @import("std");
-const allocator = std.debug.global_allocator;
+
+const allocator = @import("./main.zig").allocator;
 
 const Chunk = @import("./chunk.zig").Chunk;
 const Value = @import("./value.zig").Value;
@@ -35,7 +36,6 @@ pub const VM = struct {
     globals: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
     objects: ?*Obj,
     output: std.Buffer,
-    output_stream: std.io.BufferOutStream,
 
     pub fn create(compiler: *Compiler) VM {
         var output = std.Buffer.initSize(allocator, 0) catch unreachable;
@@ -49,7 +49,6 @@ pub const VM = struct {
             .globals = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .objects = null,
             .output = output,
-            .output_stream = output_stream,
         };
     }
 
@@ -127,14 +126,14 @@ pub const VM = struct {
 
     fn runtimeError(self: *VM, format: []const u8, args: ...) void {
         const instruction = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr);
-        std.debug.warn("[line {}] in script\n", self.chunk.lines.at(instruction));
+        //std.debug.warn("[line {}] in script\n", self.chunk.lines.at(instruction));
         self.resetStack();
     }
 
     fn printDebug(self: *VM) void {
-        std.debug.warn("\n");
+        //std.debug.warn("\n");
         for (self.stack.toSlice()) | s, i | {
-            std.debug.warn("[{}]\n", s.toString());
+            //std.debug.warn("[{}]\n", s.toString());
         }
         _ = self.chunk.disassembleInstruction(@ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr));
     }
@@ -292,7 +291,7 @@ pub const VM = struct {
                 OpCode.Print => {
                     const val = self.pop();
                     self.print(val);
-                    std.debug.warn("\n");
+                    self.puts("\n");
                 },
                 OpCode.JumpIfFalse => {
                     const offset = self.readShort();
@@ -310,30 +309,26 @@ pub const VM = struct {
                     return;
                 },
                 else => {
-                    std.debug.warn("Unknown instruction");
+                    //std.debug.warn("Unknown instruction");
                     return error.CompileError;
                 }
             }
         }
     }
 
-    pub fn puts(self:*VM, value: Value) void {
-        switch (value) {
-            .Bool => |b| std.debug.warn("{}", b),
-            .Number => |d| std.debug.warn("{}", d),
-            .Obj => |o| switch(o.data) {
-                .String => |s| std.debug.warn("{}", s.bytes),
-            },
-            .Nil => std.debug.warn("nil")
-        }
-    }
+    var buffer = []u8 {0} ** 1024;
     
     pub fn print(self:*VM, value: Value) void {
-        self.output_stream.stream.write(value.toString()) catch unreachable;
+        const string = value.toString(buffer[0..]);
+        self.output.append(string) catch unreachable;
+    }
+
+    pub fn puts(self:*VM, string: []const u8) void {
+        self.output.append(string) catch unreachable;
     }
 
     pub fn flush(self:*VM) void {
-        std.debug.warn("{}", self.output.toSliceConst());
+        //std.debug.warn("{}", self.output.toSliceConst());
     }
 
     pub fn freeObjects(self: *VM) void {

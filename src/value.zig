@@ -1,5 +1,4 @@
 const std = @import("std");
-const allocator = std.debug.global_allocator;
 
 const Obj = @import("object.zig").Obj;
 
@@ -10,18 +9,16 @@ pub const ValueType = enum {
   Nil,
 };
 
-var toString_buffer = []u8 {0} ** 1024;
-
 pub const Value = union(ValueType) {
     Bool: bool,
     Number: f64,
     Obj: *Obj,
     Nil,
 
-    fn toString(value: Value) []const u8 {
+    fn toString(value: Value, buffer: []u8) []const u8 {
       switch (value) {
-        .Bool => |b| return std.fmt.bufPrint(&toString_buffer, "{}", b) catch unreachable,
-        .Number => |n|  return std.fmt.bufPrint(&toString_buffer, "{}", n) catch unreachable,
+        .Bool => |b| return std.fmt.bufPrint(buffer, "{}", b) catch unreachable,
+        .Number => |n|  return std.fmt.bufPrint(buffer, "{}", n) catch unreachable,
         .Obj => |o| return o.toString(),
         .Nil => return "nil",
       }
