@@ -71,11 +71,7 @@ pub const Obj = struct {
         }
     }
 
-    fn print(self: Obj) void {
-        switch(self.data) {
-            .String => |s| std.debug.warn("{}", s.bytes),
-        }
-    }
+
 
     fn equal(self: *Obj, other: *Obj) bool {
         switch(self.data) {

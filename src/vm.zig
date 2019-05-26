@@ -34,8 +34,12 @@ pub const VM = struct {
     strings: std.HashMap([]const u8, *Obj, ObjString.hashFn, ObjString.eqlFn),
     globals: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
     objects: ?*Obj,
+    output: std.Buffer,
+    output_stream: std.io.BufferOutStream,
 
     pub fn create(compiler: *Compiler) VM {
+        var output = std.Buffer.initSize(allocator, 0) catch unreachable;
+        var output_stream = std.io.BufferOutStream.init(&output);
         return VM {
             .instance = Instance.create(compiler),
             .chunk = undefined,
@@ -44,6 +48,8 @@ pub const VM = struct {
             .strings = std.HashMap([]const u8, *Obj, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .globals = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .objects = null,
+            .output = output,
+            .output_stream = output_stream,
         };
     }
 
@@ -60,6 +66,7 @@ pub const VM = struct {
     fn runFile(vm: *VM, path: []const u8) !void {
         const source = try std.io.readFileAlloc(allocator, path);
         const result = try vm.interpret(source);
+        vm.flush();
     }
 
     fn interpret(self: *VM, source: []const u8) !void {
@@ -284,7 +291,7 @@ pub const VM = struct {
                 },
                 OpCode.Print => {
                     const val = self.pop();
-                    val.print();
+                    self.print(val);
                     std.debug.warn("\n");
                 },
                 OpCode.JumpIfFalse => {
@@ -310,6 +317,25 @@ pub const VM = struct {
         }
     }
 
+    pub fn puts(self:*VM, value: Value) void {
+        switch (value) {
+            .Bool => |b| std.debug.warn("{}", b),
+            .Number => |d| std.debug.warn("{}", d),
+            .Obj => |o| switch(o.data) {
+                .String => |s| std.debug.warn("{}", s.bytes),
+            },
+            .Nil => std.debug.warn("nil")
+        }
+    }
+    
+    pub fn print(self:*VM, value: Value) void {
+        self.output_stream.stream.write(value.toString()) catch unreachable;
+    }
+
+    pub fn flush(self:*VM) void {
+        std.debug.warn("{}", self.output.toSliceConst());
+    }
+
     pub fn freeObjects(self: *VM) void {
         var object =  self.objects;
         while (object) |o| {
@@ -321,6 +347,9 @@ pub const VM = struct {
 
     pub fn destroy(self: *VM) void {
         self.stack.deinit();
+        self.globals.deinit();
+        self.strings.deinit();
+        self.output.deinit();
         self.freeObjects();
     }
 };

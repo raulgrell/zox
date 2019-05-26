@@ -27,20 +27,6 @@ pub const Value = union(ValueType) {
       }
     }
 
-    fn print(value: Value) void {
-      switch (value) {
-        .Bool => |b| std.debug.warn("{}", b),
-        .Number => |d| std.debug.warn("{}", d),
-        .Obj => |o| o.print(),
-        .Nil => std.debug.warn("nil")
-      }
-    }
-
-    fn printLine(value: Value) void {
-      print(value);
-      std.debug.warn("\n");
-    }
-
     fn equals(a: Value, b: Value) bool {
       if (ValueType(a) != ValueType(b)) return false;
       switch (a) {

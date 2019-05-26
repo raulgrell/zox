@@ -1,5 +1,7 @@
 const std = @import("std");
-const allocator = std.debug.global_allocator;
+const builtin = @import("builtin");
+
+const allocator = if (builtin.arch == builtin.Arch.wasm32) std.heap.wasm_allocator else std.debug.global_allocator;
 
 const VM = @import("./vm.zig").VM;
 const REPL = @import("./repl.zig").REPL;
@@ -27,6 +29,7 @@ pub fn main() !void {
     switch(args_list.len) {
         1 => try vm.runRepl(),
         2 => try vm.runFile(args_list.at(1)),
+        3 => try vm.interpret(example_file),
         else => showUsage()
     }
 }
@@ -42,3 +45,33 @@ fn showUsage() void {
     std.debug.warn("Usage: lang [path]\n");
 }
 
+export fn _wasm_main(input_ptr: [*]const u8, input_len: usize, output_ptr: *[*]u8, output_len: *usize) bool {
+
+    const input = input_ptr[0..input_len];
+
+    var compiler = Compiler.create();
+    var instance = VM.create(&compiler);
+    defer instance.destroy();
+
+    vm = &instance;
+
+    vm.interpret(input) catch return false;
+
+    const slice = vm.output.toSliceConst();
+    var output = allocator.alloc(u8, slice.len) catch return false;
+    std.mem.copy(u8, output, slice);
+
+    output_ptr.* = output.ptr;
+    output_len.* = output.len;
+    
+    return true;
+}
+
+export fn _wasm_alloc(len: usize) usize {
+    var buf = allocator.alloc(u8, len) catch |err| return 0;
+    return @ptrToInt(buf.ptr);
+}
+
+export fn _wasm_dealloc(ptr: [*]const u8, len: usize) void {
+    allocator.free(ptr[0..len]);
+}

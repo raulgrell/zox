@@ -14,10 +14,6 @@
 </head>
 
 <body>
-    <h1>zig fmt <button disabled>Format</button></h1>
-    <textarea rows="42"
-        cols="120">const std = @import("std"); pub fn main() void { std.debug.warn("Hello World\n"); }</textarea>
-    <p>Source: <a href="https://github.com/shritesh/zigfmt-web">https://github.com/shritesh/zigfmt-web</a></p>
     <script>
         const format = function (source) {
             // convert source to Uint8Array
@@ -62,10 +58,8 @@
             // dealloc result
             this._wasm_dealloc(return_val_ptr, return_val_len);
 
-            // decode result
+            // decode  and return result
             const textDecoder = new TextDecoder();
-
-            // return result
             return textDecoder.decode(result);
         };
 
