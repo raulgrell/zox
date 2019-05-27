@@ -17,6 +17,10 @@ pub const ObjString = struct {
 
     pub fn copy(bytes: []const u8) *Obj {
         const hash = hashFn(bytes);
+
+        const interned = vm.strings.get(bytes);
+        if (interned) |s| return s.value;
+
         const heapChars = allocator.alloc(u8, bytes.len) catch unreachable;
         std.mem.copy(u8, heapChars, bytes);
 
@@ -25,6 +29,13 @@ pub const ObjString = struct {
 
     pub fn take(bytes: []const u8) *Obj {
         const hash = hashFn(bytes);
+        
+        const interned = vm.strings.get(bytes);
+        if (interned) |s| {
+            allocator.free(bytes);
+            return s.value;
+        }
+
         return allocate(bytes, hash);
     }
 
@@ -36,6 +47,7 @@ pub const ObjString = struct {
                 .hash = hash
             }
         };
+        _ = vm.strings.put(bytes, string) catch unreachable;
         return string;
     }
 
@@ -78,7 +90,7 @@ pub const Obj = struct {
 
     fn equal(self: *Obj, other: *Obj) bool {
         switch(self.data) {
-            .String => |s| return std.mem.eql(u8, self.data.String.bytes, other.data.String.bytes),
+            .String => |s| return self == other,
         }
     }
     

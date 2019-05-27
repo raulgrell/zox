@@ -335,7 +335,8 @@ pub const VM = struct {
     }
 
     pub fn flush(self:*VM) void {
-        std.debug.warn("{}\n", self.output.toSliceConst());
+        std.debug.warn("{}", self.output.toSliceConst());
+        self.output.resize(0) catch unreachable;
     }
 
     pub fn freeObjects(self: *VM) void {
