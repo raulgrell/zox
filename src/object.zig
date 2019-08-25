@@ -4,11 +4,14 @@ const allocator = @import("./main.zig").allocator;
 
 const VM = @import("vm.zig").VM;
 const Value = @import("value.zig").Value;
+const Chunk = @import("chunk.zig").Chunk;
 
-extern var vm: *VM;
+extern var vm: VM;
 
 pub const ObjType = enum {
-    String
+    Function,
+    Native,
+    String,
 };
 
 pub const ObjString = struct {
@@ -66,8 +69,38 @@ pub const ObjString = struct {
     }
 };
 
-pub const ObjFn = struct {
+pub const ObjFunction = struct {
+    arity: u8,
+    chunk: Chunk,
+    name: ?*ObjString,
+    
+    pub fn allocate() *Obj {
+        const function = Obj.allocate();
+        function.data = Obj.Data {
+            .Function = ObjFunction {
+                .arity = 0,
+                .chunk = Chunk.init(),
+                .name = null,
+            }
+        };
+        return function;
+    }
+};
 
+pub const ObjNative = struct {
+    function: NativeFn,
+
+    pub const NativeFn = fn(args: []Value) Value;
+
+    pub fn allocate(function: NativeFn) *Obj {
+        const func = Obj.allocate();
+        func.data = Obj.Data {
+            .Native = ObjNative {
+                .function = function
+            }
+        };
+        return func;
+    }
 };
 
 pub const Obj = struct {
@@ -76,21 +109,25 @@ pub const Obj = struct {
 
     pub const Data = union(ObjType) {
         String: ObjString,
+        Function: ObjFunction,
+        Native: ObjNative
     };
 
-    pub fn value(self: *Obj) Value {
+    pub fn value(self: *const Obj) Value {
         return Value { .Obj = self };
     }
 
     pub fn toString(self: Obj) []const u8 {
         switch(self.data) {
+            .Function => |f| return if (f.name) |n| n.bytes else "",
+            .Native => |n| return "Native",
             .String => |s| return s.bytes,
         }
     }
 
-    fn equal(self: *Obj, other: *Obj) bool {
+    fn equal(self: *const Obj, other: *const Obj) bool {
         switch(self.data) {
-            .String => |s| return self == other,
+            .Function, .Native, .String => return self == other,
         }
     }
     
@@ -106,6 +143,13 @@ pub const Obj = struct {
 
     pub fn free(self: *Obj) void {
         switch (self.data) {
+            .Function => |f| {
+                if (f.name) |n| allocator.free(n.bytes);
+                allocator.destroy(self);
+            },
+            .Native => {
+                allocator.destroy(self);
+            },
             .String => |s| {
                 allocator.free(s.bytes);
                 allocator.destroy(self);
@@ -113,5 +157,3 @@ pub const Obj = struct {
         }
     }
 };
-
-

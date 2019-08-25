@@ -9,12 +9,12 @@ pub const ValueType = enum {
   Nil,
 };
 
-var buffer = []u8 {0} ** 1024;
+var buffer = [_]u8 {0} ** 1024;
 
 pub const Value = union(ValueType) {
     Bool: bool,
     Number: f64,
-    Obj: *Obj,
+    Obj: *const Obj,
     Nil,
 
     fn toString(value: Value) []const u8 {
@@ -31,17 +31,17 @@ pub const Value = union(ValueType) {
       switch (a) {
         .Bool => return a.Bool == b.Bool,
         .Number => return a.Number == b.Number,
-        .Nil => return true,
         .Obj => |o| return o.equal(b.Obj),
+        .Nil => return true,
       }
     }
 
     fn isTruthy(value: Value) bool {
       switch (value) {
-        .Nil => return false,
         .Bool => |b| return b,
         .Number => |n| return true,
         .Obj => |o| return true, 
+        .Nil => return false,
       }
     }
 };

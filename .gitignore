@@ -1,13 +1,19 @@
-// Build artifacts
-zig-cache/
-*.exe
-*.obj
-*.pdb
-*.def
-*.lib
+# Development
+.vscode/
+todo/
 
+# Zig artifacts
+build/
+zig-cache/
+
+# C artifacts
+*.o
 *.a
 *.h
-*.o
 
-main
+# Windows artifacts
+*.exe
+*.pdb
+*.obj
+*.def
+*.lib

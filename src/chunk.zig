@@ -35,11 +35,15 @@ pub const Chunk = struct {
         self.lines.len = 0;
     }
 
+    pub fn ptr(self: *const Chunk) [*]u8 {
+        return self.code.items.ptr;
+    }
+
     pub fn addConstant(self: *Chunk, value: Value) u8 {
         self.constants.append(value) catch unreachable;
         return @intCast(u8, self.constants.len - 1);
     }
-
+    
     pub fn write(self: *Chunk, byte: u8, line: usize) !void {
         try self.code.append(byte);
 
@@ -55,11 +59,11 @@ pub const Chunk = struct {
         }
     }
 
-    fn instructionAt(chunk: *Chunk, offset: usize) OpCode {
+    fn instructionAt(chunk: *const Chunk, offset: usize) OpCode {
         return @intToEnum(OpCode, chunk.code.at(offset));
     }
 
-    fn getLine(chunk: *Chunk, offset: usize) u32 {
+    fn getLine(chunk: *const Chunk, offset: usize) u32 {
         var start: usize = 0;
         var end: usize = chunk.lines.len;
         while (start < end) {
@@ -75,7 +79,7 @@ pub const Chunk = struct {
         return chunk.lines.at(end - 1).line;
     }
 
-   fn disassembleInstruction(chunk: *Chunk, offset: usize) usize {
+   fn disassembleInstruction(chunk: *const Chunk, offset: usize) usize {
         const line = chunk.getLine(offset);
         std.debug.warn("{}:{} | ", offset, line);
 
@@ -104,6 +108,7 @@ pub const Chunk = struct {
             OpCode.JumpIfFalse => return jumpInstruction("JumpIfFalse", 1, chunk, offset),
             OpCode.Jump => return jumpInstruction("Jump", 1, chunk, offset),
             OpCode.Loop => return jumpInstruction("Loop", -1, chunk, offset),
+            OpCode.Call => return byteInstruction("Call", chunk, offset),
             OpCode.Return => return simpleInstruction("Return", offset),
             else => {
                 std.debug.warn("Unknown opcode: {}\n", instruction);
@@ -112,20 +117,20 @@ pub const Chunk = struct {
         }
     }
 
-    fn jumpInstruction(name: []const u8, sign: i32, chunk: *Chunk, offset: usize) usize {
+    fn jumpInstruction(name: []const u8, sign: i32, chunk: *const Chunk, offset: usize) usize {
         var jump = @intCast(i16, chunk.code.at(offset + 1)) << 8;
         jump |= @intCast(i16, chunk.code.at(offset + 2));
         std.debug.warn("{}: {} -> {}\n", name, offset, @intCast(i16, offset + 3) + sign * jump);
         return offset + 3;
     }
 
-    fn byteInstruction(name: []const u8, chunk: *Chunk, offset: usize) usize {
+    fn byteInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
         const slot = chunk.code.at(offset + 1);
         std.debug.warn("{}: {}\n", slot, name);
         return offset + 2;
     }
 
-    fn constantInstruction(name: []const u8, chunk: *Chunk, offset: usize) usize {
+    fn constantInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
         const constant = chunk.code.at(offset + 1);
         std.debug.warn("{} {}: {}\n", name, constant, chunk.constants.at(constant).toString());
         return offset + 2;

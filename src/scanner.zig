@@ -12,9 +12,10 @@ fn keyword(token_type: TokenType, name: []const u8) Keyword {
     };
 }
 
-pub const keywords = []Keyword {
+pub const keywords = [_]Keyword {
     keyword(TokenType.And, "and"),
     keyword(TokenType.Class, "class"),
+    keyword(TokenType.Const, "const"),
     keyword(TokenType.Else, "else"),
     keyword(TokenType.False, "false"),
     keyword(TokenType.Fn, "fn"),
@@ -47,11 +48,11 @@ pub const Token = struct {
 
 pub const TokenType = enum {
     // Punctuation
-    LeftParen, RightParen, LeftBrace, RightBrace, Comma, Dot, Semicolon,
+    LeftParen, RightParen, LeftBrace, RightBrace, Comma, Dot, Colon, Semicolon,
     // Operators
-    Slash, Star,  Minus, Plus, Bang, BangEqual, Equal, EqualEqual, Greater, GreaterEqual, Less, LessEqual,
+    Slash, Star, Minus, Plus, Bang, BangEqual, Equal, EqualEqual, Greater, GreaterEqual, Less, LessEqual,
     // Keywords
-    And, Class, Else, False, Fn, For, If, Nil, Or, Print, Return, Super, This, True, Var, While,
+    And, Class, Const, Else, False, Fn, For, If, Nil, Or, Print, Return, Super, This, True, Var, While,
     // Literals
     Identifier, String, Number,
     // Control
@@ -94,6 +95,7 @@ pub const Scanner = struct {
             '.' => return self.makeToken(TokenType.Dot),
             '-' => return self.makeToken(TokenType.Minus),
             '+' => return self.makeToken(TokenType.Plus),
+            ':' => return self.makeToken(TokenType.Colon),
             ';' => return self.makeToken(TokenType.Semicolon),
             '*' => return self.makeToken(TokenType.Star),
             '!' => return self.makeToken(if (self.match('=')) TokenType.BangEqual else TokenType.Bang),
@@ -211,6 +213,7 @@ pub const Scanner = struct {
         if (self.isAtEnd()) {
             return self.makeError("Unterminated string.");
         }
+        
         // The closing ".
         _ = self.advance();
 
