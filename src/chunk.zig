@@ -1,9 +1,8 @@
 const std = @import("std");
+const allocator = @import("root").allocator;
 
 const Value = @import("./value.zig").Value;
 const OpCode = @import("./vm.zig").OpCode;
-
-const allocator = @import("./main.zig").allocator;
 
 const Line = struct {
     line: u32,

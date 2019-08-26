@@ -210,6 +210,7 @@ pub const Scanner = struct {
             if (self.peek() == '\n') self.line += 1;
             _ = self.advance();
         }
+        
         if (self.isAtEnd()) {
             return self.makeError("Unterminated string.");
         }

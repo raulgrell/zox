@@ -1,6 +1,5 @@
 const std = @import("std");
-
-const allocator = @import("./main.zig").allocator;
+const allocator = @import("root").allocator;
 
 const VM = @import("vm.zig").VM;
 const Value = @import("value.zig").Value;
