@@ -10,22 +10,48 @@ const Obj = @import("./object.zig").Obj;
 const ObjString = @import("./object.zig").ObjString;
 const ObjFunction = @import("./object.zig").ObjFunction;
 const ObjNative = @import("./object.zig").ObjNative;
+const ObjClosure = @import("./object.zig").ObjClosure;
 
 const verbose = false;
 
 pub const OpCode = enum(u8) {
-    Constant, Nil, True, False,
-    Equal, NotEqual, Greater, Less, GreaterEqual, LessEqual,
-    Add, Subtract, Multiply, Divide, Negate,
-    Not, And, Or,
-    Print, Pop, GetLocal, SetLocal, DefineGlobal, GetGlobal, SetGlobal,
-    JumpIfFalse, Jump, Call, Loop, Return
+    Constant,
+    Nil,
+    True,
+    False,
+    Equal,
+    NotEqual,
+    Greater,
+    Less,
+    GreaterEqual,
+    LessEqual,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
+    Not,
+    And,
+    Or,
+    Print,
+    Pop,
+    GetLocal,
+    SetLocal,
+    DefineGlobal,
+    GetGlobal,
+    SetGlobal,
+    JumpIfFalse,
+    Jump,
+    Call,
+    Closure,
+    Loop,
+    Return,
 };
 
 pub const CallFrame = struct {
-  function: *const ObjFunction,
-  ip: [*]u8,
-  slots: u32,
+    function: *const ObjFunction,
+    ip: [*]u8,
+    slots: u32,
 
     fn readByte(frame: *CallFrame) u8 {
         const byte = frame.ip[0];
@@ -70,7 +96,7 @@ pub const VM = struct {
         output_buffer = std.Buffer.initSize(allocator, 0) catch unreachable;
         stdout = std.io.BufferOutStream.init(&output_buffer);
 
-        return VM {
+        return VM{
             .instance = Instance.create(),
             .frames = undefined,
             .frame_count = 0,
@@ -98,16 +124,14 @@ pub const VM = struct {
         return self.stack.pop();
     }
 
-    fn popFrame(self: *VM, frame: *CallFrame) void {
-
-    }
+    fn popFrame(self: *VM, frame: *CallFrame) void {}
 
     fn peek(self: *VM, distance: u32) Value {
         return self.stack.at(self.stack.len - 1 - distance);
     }
 
     fn slice(self: *VM, distance: u32) []Value {
-        return self.stack.items[self.stack.len - 1 - distance..];
+        return self.stack.items[self.stack.len - 1 - distance ..];
     }
 
     fn resetStack(self: *VM) void {
@@ -118,6 +142,7 @@ pub const VM = struct {
     fn callValue(self: *VM, callee: Value, arg_count: u8) !void {
         switch (callee) {
             .Obj => |o| switch (o.data) {
+                .Closure => return self.call(o, arg_count),
                 .Function => return self.call(o, arg_count),
                 .Native => |n| {
                     const result = n.function(self.slice(arg_count));
@@ -126,9 +151,9 @@ pub const VM = struct {
                     return;
                 },
                 .String => {},
-                else => unreachable
+                else => unreachable,
             },
-            .Bool, .Number, .Nil => {}
+            .Bool, .Number, .Nil => {},
         }
 
         self.runtimeError("Can only call functions and classes.");
@@ -171,7 +196,7 @@ pub const VM = struct {
         self.output_stream.stream.print("\n") catch unreachable;
 
         var i = self.frame_count - 1;
-        while ( i > 0) : (i -= 1) {
+        while (i > 0) : (i -= 1) {
             const prev_frame = &self.frames[i];
             const function = prev_frame.function;
             const offset = @ptrToInt(prev_frame.ip) - @ptrToInt(function.chunk.ptr());
@@ -192,23 +217,23 @@ pub const VM = struct {
     fn printDebug(self: *VM) !void {
         const frame = &self.frames[self.frame_count - 1];
         const instruction = @ptrToInt(frame.ip) - @ptrToInt(frame.function.chunk.ptr());
-        for (self.stack.toSlice()) | s, i | {
+        for (self.stack.toSlice()) |s, i| {
             try self.output_stream.stream.print("[{}]\n", s.toString());
         }
         _ = frame.function.chunk.disassembleInstruction(instruction);
         try self.output_stream.stream.print("\n");
     }
 
-    pub fn print(self:*VM, value: Value) void {
+    pub fn print(self: *VM, value: Value) void {
         const string = value.toString();
         self.output.append(string) catch unreachable;
     }
 
-    pub fn puts(self:*VM, string: []const u8) void {
+    pub fn puts(self: *VM, string: []const u8) void {
         self.output.append(string) catch unreachable;
     }
 
-    pub fn flush(self:*VM) void {
+    pub fn flush(self: *VM) void {
         std.debug.warn("{}", self.output.toSliceConst());
         self.output.resize(0) catch unreachable;
     }
@@ -224,8 +249,8 @@ pub const VM = struct {
                     self.push(constant);
                 },
                 OpCode.Nil => self.push(Value.Nil),
-                OpCode.True => self.push(Value {.Bool = true}),
-                OpCode.False => self.push(Value {.Bool = false}),
+                OpCode.True => self.push(Value{ .Bool = true }),
+                OpCode.False => self.push(Value{ .Bool = false }),
                 OpCode.Pop => _ = self.pop(),
                 OpCode.GetLocal => {
                     const slot = frame.readByte();
@@ -260,12 +285,12 @@ pub const VM = struct {
                 OpCode.Equal => {
                     const b = self.pop();
                     const a = self.pop();
-                    self.push(Value { .Bool = a.equals(b) });
+                    self.push(Value{ .Bool = a.equals(b) });
                 },
                 OpCode.Add => {
                     const a = self.peek(0);
                     const b = self.peek(1);
-                    switch(a) {
+                    switch (a) {
                         .Obj => |o| {
                             switch (o.data) {
                                 .String => try self.concatenate(),
@@ -278,22 +303,18 @@ pub const VM = struct {
                         else => unreachable,
                     }
                 },
-                OpCode.Subtract,
-                OpCode.Multiply,
-                OpCode.Divide,
-                OpCode.Greater,
-                OpCode.Less => try self.binary(Value.Number, instruction),
-                OpCode.Not => self.push(Value { .Bool = !self.pop().isTruthy() }),
+                OpCode.Subtract, OpCode.Multiply, OpCode.Divide, OpCode.Greater, OpCode.Less => try self.binary(Value.Number, instruction),
+                OpCode.Not => self.push(Value{ .Bool = !self.pop().isTruthy() }),
                 OpCode.Negate => {
-                    switch(self.peek(0)) {
+                    switch (self.peek(0)) {
                         .Number => |x| {
                             const number = self.pop().Number;
-                            self.push(Value { .Number = -number });
+                            self.push(Value{ .Number = -number });
                         },
                         else => {
                             self.runtimeError("Operand must be a number.");
                             return error.RuntimeError;
-                        }
+                        },
                     }
                 },
                 OpCode.Print => {
@@ -318,6 +339,11 @@ pub const VM = struct {
                     try self.callValue(self.peek(arg_count), arg_count);
                     frame = &self.frames[self.frame_count - 1];
                 },
+                OpCode.Closure => {
+                    const function = frame.readConstant(&frame.function.chunk);
+                    const closure = ObjClosure.allocate(function.Obj.data.Closure.function);
+                    self.push(closure.value());
+                },
                 OpCode.Return => {
                     const result = self.pop();
                     self.frame_count -= 1;
@@ -332,7 +358,7 @@ pub const VM = struct {
                 else => {
                     self.runtimeError("Unknown instruction");
                     return error.CompileError;
-                }
+                },
             }
         }
     }
@@ -357,17 +383,17 @@ pub const VM = struct {
                             .Divide => lhs / rhs,
                             else => unreachable,
                         };
-                        val = Value { .Number = number };
+                        val = Value{ .Number = number };
                     },
                     .Less, .LessEqual, .Greater, .GreaterEqual => {
-                        const result = switch ( operator) {
+                        const result = switch (operator) {
                             .Less => lhs < rhs,
                             .LessEqual => lhs <= rhs,
                             .Greater => lhs > rhs,
                             .GreaterEqual => lhs >= rhs,
                             else => unreachable,
                         };
-                        val = Value { .Bool = result };
+                        val = Value{ .Bool = result };
                     },
                     else => unreachable,
                 }
@@ -384,9 +410,9 @@ pub const VM = struct {
                     .Or => lhs or rhs,
                     else => unreachable,
                 };
-                val = Value { .Bool = result };
+                val = Value{ .Bool = result };
             },
-            else => unreachable
+            else => unreachable,
         }
 
         self.push(val);
@@ -406,7 +432,7 @@ pub const VM = struct {
     }
 
     pub fn freeObjects(self: *VM) void {
-        var object =  self.objects;
+        var object = self.objects;
         while (object) |o| {
             const next = o.next;
             Obj.free(o);

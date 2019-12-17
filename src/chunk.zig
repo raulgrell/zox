@@ -15,7 +15,7 @@ pub const Chunk = struct {
     constants: std.ArrayList(Value),
 
     pub fn init() Chunk {
-        return Chunk {
+        return Chunk{
             .code = std.ArrayList(u8).init(allocator),
             .lines = std.ArrayList(Line).init(allocator),
             .constants = std.ArrayList(Value).init(allocator),
@@ -42,12 +42,12 @@ pub const Chunk = struct {
         self.constants.append(value) catch unreachable;
         return @intCast(u8, self.constants.len - 1);
     }
-    
+
     pub fn write(self: *Chunk, byte: u8, line: usize) !void {
         try self.code.append(byte);
 
         if (self.lines.len == 0 or self.lines.at(self.lines.len - 1).line != line)
-            try self.lines.append(Line{.line = @intCast(u32, line), .offset = byte});
+            try self.lines.append(Line{ .line = @intCast(u32, line), .offset = byte });
     }
 
     pub fn disassemble(chunk: *Chunk, name: []const u8) void {
@@ -78,7 +78,7 @@ pub const Chunk = struct {
         return chunk.lines.at(end - 1).line;
     }
 
-   fn disassembleInstruction(chunk: *const Chunk, offset: usize) usize {
+    fn disassembleInstruction(chunk: *const Chunk, offset: usize) usize {
         const line = chunk.getLine(offset);
         std.debug.warn("{}:{} | ", offset, line);
 
@@ -108,11 +108,16 @@ pub const Chunk = struct {
             OpCode.Jump => return jumpInstruction("Jump", 1, chunk, offset),
             OpCode.Loop => return jumpInstruction("Loop", -1, chunk, offset),
             OpCode.Call => return byteInstruction("Call", chunk, offset),
+            OpCode.Closure => {
+                const constant = chunk.code.at(offset + 1);
+                std.debug.warn("Closure {}: {}\n", constant, chunk.constants.at(constant).toString());
+                return offset + 2;
+            },
             OpCode.Return => return simpleInstruction("Return", offset),
             else => {
                 std.debug.warn("Unknown opcode: {}\n", instruction);
                 return offset + 1;
-            }
+            },
         }
     }
 

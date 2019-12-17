@@ -13,3 +13,15 @@ print fib(30);
 var t = clock() - k;
 
 print t;
+
+fun makeClosure(value) {
+  fun closure() {
+    print value;
+  }
+  return closure;
+}
+
+var doughnut = makeClosure("doughnut");
+var bagel = makeClosure("bagel");
+doughnut();
+bagel();
