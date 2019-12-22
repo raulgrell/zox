@@ -2,7 +2,10 @@ const std = @import("std");
 const allocator = @import("root").allocator;
 
 const Value = @import("./value.zig").Value;
+const VM = @import("./vm.zig").VM;
 const OpCode = @import("./vm.zig").OpCode;
+
+extern var vm: VM;
 
 const Line = struct {
     line: u32,
@@ -39,7 +42,9 @@ pub const Chunk = struct {
     }
 
     pub fn addConstant(self: *Chunk, value: Value) u8 {
+        vm.push(value);
         self.constants.append(value) catch unreachable;
+        _ = vm.pop();
         return @intCast(u8, self.constants.len - 1);
     }
 
@@ -51,8 +56,8 @@ pub const Chunk = struct {
     }
 
     pub fn disassemble(chunk: *Chunk, name: []const u8) void {
-        std.debug.warn("== {} ==\n", name);
-        var i = usize(0);
+        std.debug.warn("== {} ==\n", .{name});
+        var i: usize = 0;
         while (i < chunk.code.len) {
             i = disassembleInstruction(chunk, i);
         }
@@ -80,7 +85,7 @@ pub const Chunk = struct {
 
     fn disassembleInstruction(chunk: *const Chunk, offset: usize) usize {
         const line = chunk.getLine(offset);
-        std.debug.warn("{}:{} | ", offset, line);
+        std.debug.warn("{}:{} | ", .{ offset, line });
 
         const instruction = chunk.instructionAt(offset);
         switch (instruction) {
@@ -91,6 +96,9 @@ pub const Chunk = struct {
             OpCode.Pop => return simpleInstruction("Pop", offset),
             OpCode.GetLocal => return byteInstruction("GetLocal", chunk, offset),
             OpCode.SetLocal => return byteInstruction("SetLocal", chunk, offset),
+            OpCode.GetUpvalue => return byteInstruction("GetUpvalue", chunk, offset),
+            OpCode.SetUpvalue => return byteInstruction("SetUpvalue", chunk, offset),
+            OpCode.CloseUpvalue => return simpleInstruction("CloseUpvalue", offset),
             OpCode.DefineGlobal => return constantInstruction("DefineGlobal", chunk, offset),
             OpCode.GetGlobal => return constantInstruction("GetGlobal", chunk, offset),
             OpCode.SetGlobal => return constantInstruction("SetGlobal", chunk, offset),
@@ -110,12 +118,20 @@ pub const Chunk = struct {
             OpCode.Call => return byteInstruction("Call", chunk, offset),
             OpCode.Closure => {
                 const constant = chunk.code.at(offset + 1);
-                std.debug.warn("Closure {}: {}\n", constant, chunk.constants.at(constant).toString());
+                std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.at(constant).toString() });
+                const function = chunk.constants.at(constant).Obj.data.Function;
+                var j: usize = 0;
+                while (j < function.upvalueCount) : (j += 1) {
+                    const isLocal = chunk.code.at(offset + 0) != 0;
+                    const index = chunk.code.at(offset + 1);
+                    const text = if (isLocal) "local" else "upvalue";
+                    std.debug.warn("{}: {} {}\n", .{ offset, text, index });
+                }
                 return offset + 2;
             },
             OpCode.Return => return simpleInstruction("Return", offset),
             else => {
-                std.debug.warn("Unknown opcode: {}\n", instruction);
+                std.debug.warn("Unknown opcode: {}\n", .{instruction});
                 return offset + 1;
             },
         }
@@ -124,24 +140,24 @@ pub const Chunk = struct {
     fn jumpInstruction(name: []const u8, sign: i32, chunk: *const Chunk, offset: usize) usize {
         var jump = @intCast(i16, chunk.code.at(offset + 1)) << 8;
         jump |= @intCast(i16, chunk.code.at(offset + 2));
-        std.debug.warn("{}: {} -> {}\n", name, offset, @intCast(i16, offset + 3) + sign * jump);
+        std.debug.warn("{}: {} . {}\n", .{ name, offset, @intCast(i16, offset + 3) + sign * jump });
         return offset + 3;
     }
 
     fn byteInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
         const slot = chunk.code.at(offset + 1);
-        std.debug.warn("{}: {}\n", slot, name);
+        std.debug.warn("{}: {}\n", .{ slot, name });
         return offset + 2;
     }
 
     fn constantInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
         const constant = chunk.code.at(offset + 1);
-        std.debug.warn("{} {}: {}\n", name, constant, chunk.constants.at(constant).toString());
+        std.debug.warn("{} {}: {}\n", .{ name, constant, chunk.constants.at(constant).toString() });
         return offset + 2;
     }
 
     fn simpleInstruction(name: []const u8, offset: usize) usize {
-        std.debug.warn("{}\n", name);
+        std.debug.warn("{}\n", .{name});
         return offset + 1;
     }
 };

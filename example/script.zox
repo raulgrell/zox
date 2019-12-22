@@ -1,27 +1,20 @@
-x = 1;
-y = 2;
-z = clock();
-print x + y + z;
+var globalOne;
+var globalTwo;
 
-fn fib(n) {
-  if (n < 2) return n;
-  return fib(n - 2) + fib(n - 1);
-}
-
-var k = clock();
-print fib(30);
-var t = clock() - k;
-
-print t;
-
-fun makeClosure(value) {
-  fun closure() {
-    print value;
+fn main() {
+  var a = "one";
+  fn one() {
+    print a;
   }
-  return closure;
+  globalOne = one;
+
+  var b = "two";
+  fn two() {
+    print b;
+  }
+  globalTwo = two;
 }
 
-var doughnut = makeClosure("doughnut");
-var bagel = makeClosure("bagel");
-doughnut();
-bagel();
+main();
+globalOne();
+globalTwo();

@@ -38,7 +38,7 @@ pub fn main() !void {
 
 fn unwrapArg(arg: anyerror![]u8) ![]u8 {
     return arg catch |err| {
-        std.debug.warn("Unable to parse command line: {}\n", err);
+        std.debug.warn("Unable to parse command line: {}\n", .{err});
         return err;
     };
 }
@@ -46,7 +46,7 @@ fn unwrapArg(arg: anyerror![]u8) ![]u8 {
 fn runRepl() !void {
     var line = [_] u8 {0} ** 256;
     while(true) {
-        std.debug.warn( "> ");
+        std.debug.warn("> ", .{});
         const source = try std.io.readLineSlice(line[0..]);
         const result = vm.interpret(source);
         vm.flush();
@@ -60,5 +60,5 @@ fn runFile(path: []const u8) !void {
 }
 
 fn showUsage() void {
-    std.debug.warn("Usage: lang [path]\n");
+    std.debug.warn("Usage: lang [path]\n", .{});
 }
