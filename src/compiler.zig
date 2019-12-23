@@ -244,7 +244,9 @@ pub const Instance = struct {
         if (verbose)
             self.currentChunk().disassemble("Chunk");
 
-        self.current = self.current.?.enclosing;
+        var comp = if (self.current) |_| self.current.? else &self.compiler;
+        self.current = comp.enclosing;
+        
         return func.*;
     }
 
@@ -258,11 +260,13 @@ pub const Instance = struct {
     }
 
     fn currentChunk(self: Instance) *Chunk {
-        return &self.current.?.function.data.Function.chunk;
+        var comp = if (self.current) |_| self.current.? else &self.compiler;
+        return &comp.function.data.Function.chunk;
     }
 
     fn currentFunction(self: Instance) *Obj {
-        return self.current.?.function;
+        var comp = if (self.current) |_| self.current.? else &self.compiler;
+        return comp.function;
     }
 
     fn statement(self: *Instance) !void {

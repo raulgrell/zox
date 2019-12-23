@@ -2,10 +2,13 @@ const std = @import("std");
 const allocator = @import("root").allocator;
 
 const Chunk = @import("./chunk.zig").Chunk;
+
 const Value = @import("./value.zig").Value;
 const ValueType = @import("./value.zig").ValueType;
+
 const Instance = @import("./compiler.zig").Instance;
 const Compiler = @import("./compiler.zig").Compiler;
+
 const Obj = @import("./object.zig").Obj;
 const ObjString = @import("./object.zig").ObjString;
 const ObjFunction = @import("./object.zig").ObjFunction;
@@ -97,7 +100,7 @@ pub const VM = struct {
     bytesAllocated: usize,
     nextGC: usize,
     grayCount: usize,
-    grayStack: []*Obj,
+    grayStack: ?[]*Obj,
 
     pub var output_buffer: std.Buffer = undefined;
     pub var stdout: std.io.BufferOutStream = undefined;
@@ -128,7 +131,7 @@ pub const VM = struct {
         var function = try self.instance.compile(source);
         self.push(function.value());
 
-        const closure = ObjClosure.allocate(function.data.Closure.function);
+        const closure = ObjClosure.allocate(&function.data.Function);
         _ = self.pop();
         self.push(closure.value());
 
@@ -528,7 +531,7 @@ pub const VM = struct {
             object = next;
         }
 
-        allocator.free(self.grayStack);
+        allocator.free(self.grayStack.?);
     }
 
     pub fn destroy(self: *VM) void {

@@ -228,28 +228,26 @@ pub const Obj = struct {
 };
 
 pub fn create(comptime T: type) *T {
-    return &reallocate(T, null, 0, @sizeOf(T)).?[0];
+    return &reallocate(T, null, 0, 1).?[0];
 }
 
 pub fn alloc(comptime T: type, count: usize) []T {
-    return reallocate(T, null, 0, @sizeOf(T) * (count));
+    return reallocate(T, null, 0, count);
 }
 
 pub fn dealloc(comptime T: type, pointer: *T) void {
-    reallocate(T, pointer, sizeof(T), 0);
+    reallocate(T, pointer, 1, 0);
 }
 
 pub fn destroy(comptime T: type, pointer: []T) void {
-    reallocate(T, pointer, sizeof(T), 0);
+    reallocate(T, pointer, pointer.len, 0);
 }
 
 pub fn reallocate(comptime T: type, previous: ?[]T, oldSize: usize, newSize: usize) ?[]T {
     vm.bytesAllocated += newSize - oldSize;
 
-    if (newSize > oldSize) {
-        if (DEBUG_STRESS_GC) {
-            collectGarbage();
-        }
+    if (DEBUG_STRESS_GC and newSize > oldSize) {
+        collectGarbage();
     }
 
     if (vm.bytesAllocated > vm.nextGC) {
@@ -261,9 +259,9 @@ pub fn reallocate(comptime T: type, previous: ?[]T, oldSize: usize, newSize: usi
             allocator.free(p);
             return null;
         }
-        return allocator.realloc(p, newSize) catch unreachable;
+        return allocator.alloc(T, newSize) catch null;
     } else {
-        return allocator.alloc(T, newSize) catch unreachable;
+        return allocator.alloc(T, newSize) catch null;
     }
 }
 
@@ -319,12 +317,12 @@ pub fn markObject(object: *Obj) void {
 
     object.isMarked = true;
 
-    if (vm.grayStack.len < vm.grayCount + 1) {
-        const capacity = growCapacity(vm.grayStack.len);
-        vm.grayStack = allocator.realloc(vm.grayStack, @sizeOf(*Obj) * capacity);
+    if (vm.grayStack.?.len < vm.grayCount + 1) {
+        const capacity = growCapacity(vm.grayStack.?.len);
+        vm.grayStack = allocator.realloc(vm.grayStack.?, capacity) catch unreachable;
     }
 
-    vm.grayStack[vm.grayCount] = object;
+    vm.grayStack.?[vm.grayCount] = object;
     vm.grayCount += 1;
 }
 
@@ -348,7 +346,7 @@ pub fn markCompilerRoots() void {
 pub fn traceReferences() void {
     while (vm.grayCount > 0) {
         vm.grayCount -= 1;
-        var object: *Obj = vm.grayStack[vm.grayCount];
+        var object: *Obj = vm.grayStack.?[vm.grayCount];
         blackenObject(object);
     }
 }
@@ -371,7 +369,7 @@ pub fn blackenObject(object: *Obj) void {
             markValue(&object.data.Upvalue.closed);
         },
         .Function => |f| {
-            markObject(f.name.?);
+            if (f.name) |n| markObject(n);
             for (f.chunk.constants.toSlice()) |*c| {
                 markValue(c);
             }
