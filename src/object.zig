@@ -6,9 +6,9 @@ const Value = @import("value.zig").Value;
 const ValueType = @import("value.zig").ValueType;
 const Chunk = @import("chunk.zig").Chunk;
 
-const GC_HEAP_GROW_FACTOR = 2;
-const DEBUG_LOG_GC = true;
-const DEBUG_STRESS_GC = true;
+const growth_factor_gc = 2;
+const verbose_gc = false;
+const stress_gc = true;
 
 fn growCapacity(capacity: usize) usize {
     return if (capacity < 8) 8 else capacity * 2;
@@ -17,6 +17,8 @@ fn growCapacity(capacity: usize) usize {
 extern var vm: VM;
 
 pub const ObjType = enum {
+    Instance,
+    Class,
     Closure,
     Function,
     Native,
@@ -101,12 +103,10 @@ pub const ObjUpvalue = struct {
 
 pub const ObjClosure = struct {
     function: *ObjFunction,
-    upvalues: []?*Obj,
+    upvalues: []*Obj,
 
     pub fn allocate(function: *ObjFunction) *Obj {
-        var upvalues = allocator.alloc(?*Obj, function.upvalueCount) catch unreachable;
-        for (upvalues) |*u| u.* = null;
-
+        var upvalues = allocator.alloc(*Obj, function.upvalueCount) catch unreachable;
         const closure = Obj.allocate();
         closure.data = Obj.Data{
             .Closure = ObjClosure{
@@ -115,6 +115,36 @@ pub const ObjClosure = struct {
             },
         };
         return closure;
+    }
+};
+
+pub const ObjClass = struct {
+    name: *ObjString,
+
+    pub fn allocate(name: *ObjString) *Obj {
+        const closure = Obj.allocate();
+        closure.data = Obj.Data{
+            .Class = ObjClass{
+                .name = name,
+            },
+        };
+        return closure;
+    }
+};
+
+pub const ObjInstance = struct {
+    class: *ObjClass,
+    fields: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
+
+    pub fn allocate(class: *ObjClass) *Obj {
+        const instance = Obj.allocate();
+        instance.data = Obj.Data{
+            .Instance = ObjInstance{
+                .class = class,
+                .fields = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
+            },
+        };
+        return instance;
     }
 };
 
@@ -158,6 +188,8 @@ pub const Obj = struct {
     next: ?*Obj,
 
     pub const Data = union(ObjType) {
+        Instance: ObjInstance,
+        Class: ObjClass,
         Upvalue: ObjUpvalue,
         String: ObjString,
         Function: ObjFunction,
@@ -171,9 +203,11 @@ pub const Obj = struct {
 
     pub fn toString(self: Obj) []const u8 {
         switch (self.data) {
+            .Instance => |i| return i.class.name.bytes,
+            .Class => |c| return c.name.bytes,
             .Upvalue => |u| return "Upvalue",
             .Closure => |c| return "Closure",
-            .Function => |f| return if (f.name) |n| n.data.String.bytes else "",
+            .Function => |f| return if (f.name) |n| n.data.String.bytes else "Function",
             .Native => |n| return "Native",
             .String => |s| return s.bytes,
         }
@@ -181,11 +215,11 @@ pub const Obj = struct {
 
     fn equal(self: *const Obj, other: *const Obj) bool {
         switch (self.data) {
-            .Upvalue, .Closure, .Function, .Native, .String => return self == other,
+            .Upvalue, .Closure, .Function, .Native, .String, .Instance, .Class => return self == other,
         }
     }
 
-    fn allocate() *Obj {
+    pub fn allocate() *Obj {
         var object = create(Obj);
         object.* = Obj{
             .data = undefined,
@@ -194,19 +228,24 @@ pub const Obj = struct {
         };
         vm.objects = object;
 
-        if (DEBUG_LOG_GC) {
-            std.debug.warn("{} allocate {} for {}\n", .{ @ptrToInt(object), @sizeOf(Obj), type });
+        if (verbose_gc) {
+            std.debug.warn("{} allocate object\n", .{@ptrToInt(object)});
         }
 
         return object;
     }
 
     pub fn free(self: *Obj) void {
-        if (DEBUG_LOG_GC) {
+        if (verbose_gc) {
             std.debug.warn("{} free type {}\n", .{ @ptrToInt(self), @tagName(self.data) });
         }
 
         switch (self.data) {
+            .Instance => |i| {
+                i.fields.deinit();
+                allocator.destroy(self);
+            },
+            .Class => |c| allocator.destroy(self),
             .Upvalue => |u| allocator.destroy(self),
             .Function => |f| {
                 if (f.name) |n| allocator.free(n.data.String.bytes);
@@ -246,7 +285,7 @@ pub fn destroy(comptime T: type, pointer: []T) void {
 pub fn reallocate(comptime T: type, previous: ?[]T, oldSize: usize, newSize: usize) ?[]T {
     vm.bytesAllocated += newSize - oldSize;
 
-    if (DEBUG_STRESS_GC and newSize > oldSize) {
+    if (stress_gc and newSize > oldSize) {
         collectGarbage();
     }
 
@@ -267,7 +306,7 @@ pub fn reallocate(comptime T: type, previous: ?[]T, oldSize: usize, newSize: usi
 
 pub fn collectGarbage() void {
     var before: usize = undefined;
-    if (DEBUG_LOG_GC) {
+    if (verbose_gc) {
         std.debug.warn("-- gc begin\n", .{});
         before = vm.bytesAllocated;
     }
@@ -277,9 +316,9 @@ pub fn collectGarbage() void {
     tableRemoveWhite();
     sweep();
 
-    vm.nextGC = vm.bytesAllocated * GC_HEAP_GROW_FACTOR;
+    vm.nextGC = vm.bytesAllocated * growth_factor_gc;
 
-    if (DEBUG_LOG_GC) {
+    if (verbose_gc) {
         std.debug.warn("-- gc end\n", .{});
         std.debug.warn("   collected {} bytes (from {} to {}) next at {}\n", .{ before - vm.bytesAllocated, before, vm.bytesAllocated, vm.nextGC });
     }
@@ -290,7 +329,7 @@ pub fn markRoots() void {
 
     var i: usize = 0;
     while (i < vm.frame_count) : (i += 1) {
-        markObject(vm.frames[i].closure);
+        // markObject(vm.frames[i].closure);
     }
 
     var upvalue: ?*Obj = vm.openUpvalues;
@@ -311,8 +350,8 @@ pub fn markValue(value: *Value) void {
 pub fn markObject(object: *Obj) void {
     if (object.isMarked) return;
 
-    if (DEBUG_LOG_GC) {
-        std.debug.warn("{} mark {}\n", .{ @ptrToInt(object), object.value() });
+    if (verbose_gc) {
+        std.debug.warn("{} mark {}\n", .{ @ptrToInt(object), @tagName(object.data) });
     }
 
     object.isMarked = true;
@@ -352,35 +391,32 @@ pub fn traceReferences() void {
 }
 
 pub fn blackenObject(object: *Obj) void {
-    if (DEBUG_LOG_GC) {
-        std.debug.warn("{} blacken {}\n", .{ @ptrToInt(object), object.value() });
+    if (verbose_gc) {
+        std.debug.warn("{} blacken {}\n", .{ @ptrToInt(object), @tagName(object.data) });
     }
 
     switch (object.data) {
+        .Instance => |i| {
+            //markObject(i.class);
+            //markTable(&instance.fields);
+        },
+        .Class => |c| {},
         .Closure => |c| {
             markObject(object);
-            const closure = object.data.Closure;
-            var i: usize = 0;
-            while (i < closure.upvalues.len) : (i += 1) {
-                markObject(closure.upvalues[i].?);
-            }
+            for (object.data.Closure.upvalues) |u| markObject(u);
         },
         .Upvalue => |u| {
             markValue(&object.data.Upvalue.closed);
         },
         .Function => |f| {
             if (f.name) |n| markObject(n);
-            for (f.chunk.constants.toSlice()) |*c| {
-                markValue(c);
-            }
+            for (f.chunk.constants.toSlice()) |*c| markValue(c);
         },
         .Native, .String => {},
     }
 }
 
-pub fn markArray(array: *ValueArray) void {
-
-}
+pub fn markArray(array: *ValueArray) void {}
 
 pub fn sweep() void {
     var previous: ?*Obj = null;

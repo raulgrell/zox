@@ -15,8 +15,10 @@ const ObjFunction = @import("./object.zig").ObjFunction;
 const ObjNative = @import("./object.zig").ObjNative;
 const ObjClosure = @import("./object.zig").ObjClosure;
 const ObjUpvalue = @import("./object.zig").ObjUpvalue;
+const ObjInstance = @import("./object.zig").ObjInstance;
+const ObjClass = @import("./object.zig").ObjClass;
 
-const verbose = false;
+const verbose = true;
 
 pub const OpCode = enum(u8) {
     Constant,
@@ -44,6 +46,8 @@ pub const OpCode = enum(u8) {
     GetUpvalue,
     SetUpvalue,
     CloseUpvalue,
+    GetProperty,
+    SetProperty,
     DefineGlobal,
     GetGlobal,
     SetGlobal,
@@ -53,6 +57,7 @@ pub const OpCode = enum(u8) {
     Closure,
     Loop,
     Return,
+    Class,
 };
 
 pub const CallFrame = struct {
@@ -72,16 +77,19 @@ pub const CallFrame = struct {
         return value;
     }
 
-    fn readConstant(frame: *CallFrame, chunk: *const Chunk) Value {
+    fn readConstant(frame: *CallFrame) Value {
+        const chunk = &frame.closure.data.Closure.function.chunk;
         return chunk.constants.at(frame.readByte());
     }
 
-    fn readString(frame: *CallFrame, chunk: *const Chunk) ObjString {
-        return chunk.constants.at(frame.readByte()).Obj.data.String;
+    fn readString(frame: *CallFrame) *ObjString {
+        const chunk = &frame.closure.data.Closure.function.chunk;
+        return &chunk.constants.at(frame.readByte()).Obj.data.String;
     }
 };
 
 const FRAMES_MAX: u32 = 64;
+const STACK_MAX: usize = 1024;
 
 pub const VM = struct {
     instance: Instance,
@@ -113,7 +121,7 @@ pub const VM = struct {
             .instance = Instance.create(),
             .frames = undefined,
             .frame_count = 0,
-            .stack = std.ArrayList(Value).init(allocator),
+            .stack = std.ArrayList(Value).initCapacity(allocator, STACK_MAX) catch unreachable,
             .strings = std.HashMap([]const u8, *Obj, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .globals = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .openUpvalues = null,
@@ -160,21 +168,24 @@ pub const VM = struct {
     fn resetStack(self: *VM) void {
         self.stack.resize(0) catch unreachable;
         self.frame_count = 0;
+        self.openUpvalues = null;
     }
 
     fn callValue(self: *VM, callee: Value, arg_count: u8) !void {
         switch (callee) {
             .Obj => |o| switch (o.data) {
+                .Class => |*c| {
+                    self.stack.ptrAt(self.stack.len - arg_count - 1).* = ObjInstance.allocate(c).value();
+                    return;
+                },
                 .Closure => return self.call(o, arg_count),
-                .Function => return self.call(o, arg_count),
                 .Native => |n| {
                     const result = n.function(self.slice(arg_count));
                     self.stack.len -= arg_count;
                     self.push(result);
                     return;
                 },
-                .String => {},
-                else => unreachable,
+                .Instance, .String, .Upvalue, .Function => {},
             },
             .Bool, .Number, .Nil => {},
         }
@@ -212,13 +223,14 @@ pub const VM = struct {
     }
 
     pub fn closeUpvalues(self: *VM, last: *Value) void {
-        while (self.openUpvalues) |o| {
-            if (@ptrToInt(o.data.Upvalue.location) >= @ptrToInt(last)) {
-                var upvalue = o;
-                upvalue.data.Upvalue.closed = upvalue.data.Upvalue.location.*;
-                upvalue.data.Upvalue.location = &upvalue.data.Upvalue.closed;
-                self.openUpvalues = upvalue.next;
-            } else break;
+        while (self.openUpvalues) |u| {
+            if (@ptrToInt(u.data.Upvalue.location) >= @ptrToInt(last)) {
+                u.data.Upvalue.closed = u.data.Upvalue.location.*;
+                u.data.Upvalue.location = &u.data.Upvalue.closed;
+                self.openUpvalues = u.next;
+            } else {
+                return;
+            }
         }
     }
 
@@ -234,10 +246,10 @@ pub const VM = struct {
         }
 
         var frame = &self.frames[self.frame_count];
+        self.frame_count += 1;
         frame.closure = closure;
         frame.ip = closure.data.Closure.function.chunk.ptr();
         frame.slots = @intCast(u32, self.stack.len) - arg_count - 1;
-        self.frame_count += 1;
     }
 
     fn defineNative(self: *VM, name: []const u8, function: ObjNative.NativeFn) void {
@@ -277,12 +289,12 @@ pub const VM = struct {
 
     fn printDebug(self: *VM) !void {
         const frame = &self.frames[self.frame_count - 1];
-        const instruction = @ptrToInt(frame.ip) - @ptrToInt(frame.closure.function.chunk.ptr());
+        const instruction = @ptrToInt(frame.ip) - @ptrToInt(frame.closure.data.Closure.function.chunk.ptr());
         for (self.stack.toSlice()) |s, i| {
             try self.output_stream.stream.print("[{}]\n", .{s.toString()});
         }
-        _ = frame.closure.function.chunk.disassembleInstruction(instruction);
-        try self.output_stream.stream.print("\n");
+        _ = frame.closure.data.Closure.function.chunk.disassembleInstruction(instruction);
+        try self.output_stream.stream.print("\n", .{});
     }
 
     pub fn print(self: *VM, value: Value) void {
@@ -306,7 +318,7 @@ pub const VM = struct {
             const instruction = @intToEnum(OpCode, frame.readByte());
             switch (instruction) {
                 OpCode.Constant => {
-                    const constant = frame.readConstant(&frame.closure.data.Closure.function.chunk);
+                    const constant = frame.readConstant();
                     self.push(constant);
                 },
                 OpCode.Nil => self.push(Value.Nil),
@@ -322,23 +334,23 @@ pub const VM = struct {
                     self.stack.at(frame.slots + slot) = self.peek(0);
                 },
                 OpCode.DefineGlobal => {
-                    const name = frame.readString(&frame.closure.data.Closure.function.chunk);
+                    const name = frame.readString();
                     const value = self.peek(0);
                     _ = try self.globals.put(name.bytes, value);
                     const popped = self.pop();
                 },
                 OpCode.GetUpvalue => {
                     const slot = frame.readByte();
-                    self.push(frame.closure.data.Closure.upvalues[slot].?.data.Upvalue.location.*);
+                    self.push(frame.closure.data.Closure.upvalues[slot].data.Upvalue.location.*);
                     break;
                 },
                 OpCode.SetUpvalue => {
                     const slot = frame.readByte();
-                    frame.closure.data.Closure.upvalues[slot].?.data.Upvalue.location.* = self.peek(0);
+                    frame.closure.data.Closure.upvalues[slot].data.Upvalue.location.* = self.peek(0);
                     break;
                 },
                 OpCode.GetGlobal => {
-                    const name = frame.readString(&frame.closure.data.Closure.function.chunk);
+                    const name = frame.readString();
                     var value = self.globals.get(name.bytes) orelse {
                         self.runtimeError("Undefined variable '{}'.", .{name.bytes});
                         return error.RuntimeError;
@@ -346,7 +358,7 @@ pub const VM = struct {
                     self.push(value.value);
                 },
                 OpCode.SetGlobal => {
-                    const name = frame.readString(&frame.closure.data.Closure.function.chunk);
+                    const name = frame.readString();
                     const value = self.peek(0);
                     _ = self.globals.put(name.bytes, value) catch {
                         self.runtimeError("Undefined variable '{}'.", .{name.bytes});
@@ -411,22 +423,21 @@ pub const VM = struct {
                     frame = &self.frames[self.frame_count - 1];
                 },
                 OpCode.Closure => {
-                    const function = frame.readConstant(&frame.closure.data.Closure.function.chunk);
-                    const closure = ObjClosure.allocate(function.Obj.data.Closure.function);
+                    const function = frame.readConstant();
+                    var closure = ObjClosure.allocate(&function.Obj.data.Function);
                     self.push(closure.value());
-                    var i: usize = 0;
-                    while (i < closure.data.Closure.upvalues.len) : (i += 1) {
-                        const isLocal = frame.readByte() == 0;
+                    for (closure.data.Closure.upvalues) |*u| {
+                        const isLocal = frame.readByte() != 0;
                         const index = frame.readByte();
                         if (isLocal) {
-                            closure.data.Closure.upvalues[i] = self.captureUpvalue(self.stack.ptrAt(frame.slots + index));
+                            u.* = self.captureUpvalue(self.stack.ptrAt(frame.slots + index));
                         } else {
-                            closure.data.Closure.upvalues[i] = frame.closure.data.Closure.upvalues[index];
+                            u.* = frame.closure.data.Closure.upvalues[index];
                         }
                     }
                 },
                 OpCode.CloseUpvalue => {
-                    self.closeUpvalues(@ptrCast(*Value, @ptrCast([*]Value, self.stack.back()) - 1));
+                    self.closeUpvalues(self.stack.ptrAt(self.stack.len - 1));
                     _ = self.pop();
                     break;
                 },
@@ -435,13 +446,50 @@ pub const VM = struct {
 
                     self.closeUpvalues(self.stack.ptrAt(frame.slots));
                     self.frame_count -= 1;
-
-                    if (self.frame_count == 0)
+                    if (self.frame_count == 0) {
+                        _ = self.pop();
                         return;
+                    }
 
                     self.stack.len -= self.stack.len - frame.slots;
                     self.push(result);
                     frame = &self.frames[self.frame_count - 1];
+                },
+                OpCode.Class => {
+                    const class = ObjClass.allocate(frame.readString());
+                    self.push(class.value());
+                },
+                OpCode.GetProperty => {
+                    if (self.peek(0).Obj.data != .Instance) {
+                        self.runtimeError("Only instances have properties.", .{});
+                        return error.RuntimeError;
+                    }
+
+                    const instance = self.peek(0).Obj.data.Instance;
+                    const name = frame.readString();
+
+                    const value = instance.fields.get(name.bytes) orelse {
+                        self.runtimeError("Undefined property {}.", .{name.bytes});
+                        return error.RuntimeError;
+                    };
+
+                    _ = self.pop(); // Instance.
+                    self.push(value.value);
+                },
+                OpCode.SetProperty => {
+                    if (self.peek(1).Obj.data != .Instance) {
+                        self.runtimeError("Only instances have properties.", .{});
+                        return error.RuntimeError;
+                    }
+
+                    var instance = self.peek(1).Obj.data.Instance;
+                    const name = frame.readString();
+
+                    _ = try instance.fields.put(name.bytes, self.peek(0));
+
+                    const value = self.pop();
+                    _ = self.pop();
+                    self.push(value);
                 },
                 else => {
                     self.runtimeError("Unknown instruction", .{});
@@ -507,8 +555,8 @@ pub const VM = struct {
     }
 
     fn concatenate(self: *VM) !void {
-        const b = self.peek(0).Obj.data.String;
         const a = self.peek(1).Obj.data.String;
+        const b = self.peek(0).Obj.data.String;
 
         const length = a.bytes.len + b.bytes.len;
         var bytes = try allocator.alloc(u8, length);

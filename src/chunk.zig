@@ -115,6 +115,10 @@ pub const Chunk = struct {
             OpCode.JumpIfFalse => return jumpInstruction("JumpIfFalse", 1, chunk, offset),
             OpCode.Jump => return jumpInstruction("Jump", 1, chunk, offset),
             OpCode.Loop => return jumpInstruction("Loop", -1, chunk, offset),
+            OpCode.Class => return constantInstruction("OP_CLASS", chunk, offset),
+            OpCode.GetProperty => return constantInstruction("GetProperty", chunk, offset),
+            OpCode.SetProperty => return constantInstruction("SetProperty", chunk, offset),
+            OpCode.Return => return simpleInstruction("Return", offset),
             OpCode.Call => return byteInstruction("Call", chunk, offset),
             OpCode.Closure => {
                 const constant = chunk.code.at(offset + 1);
@@ -129,7 +133,6 @@ pub const Chunk = struct {
                 }
                 return offset + 2;
             },
-            OpCode.Return => return simpleInstruction("Return", offset),
             else => {
                 std.debug.warn("Unknown opcode: {}\n", .{instruction});
                 return offset + 1;

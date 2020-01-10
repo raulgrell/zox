@@ -12,8 +12,8 @@ const Obj = @import("./object.zig").Obj;
 const ObjString = @import("./object.zig").ObjString;
 const ObjFunction = @import("./object.zig").ObjFunction;
 
-const verbose = true;
-const verbose_parse = true;
+const verbose = false;
+const verbose_parse = false;
 
 pub const Parser = struct {
     current: Token,
@@ -105,7 +105,7 @@ const rules: [num_rules]ParseRule = blk: {
     list[@enumToInt(TokenType.LeftBrace)] = makeRule(.LeftBrace, null, null, Precedence.None);
     list[@enumToInt(TokenType.RightBrace)] = makeRule(.RightBrace, null, null, Precedence.None);
     list[@enumToInt(TokenType.Comma)] = makeRule(.Comma, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Dot)] = makeRule(.Dot, null, null, Precedence.Call);
+    list[@enumToInt(TokenType.Dot)] = makeRule(.Dot, null, Instance.dot, Precedence.Call);
     list[@enumToInt(TokenType.Minus)] = makeRule(.Minus, Instance.unary, Instance.binary, Precedence.Term);
     list[@enumToInt(TokenType.Plus)] = makeRule(.Plus, null, Instance.binary, Precedence.Term);
     list[@enumToInt(TokenType.Colon)] = makeRule(.Colon, null, null, Precedence.None);
@@ -201,8 +201,8 @@ pub const Instance = struct {
 
     pub fn create() Instance {
         return Instance{
-            .current = null,
             .compiler = Compiler.create(null, .Script),
+            .current = null,
             .parser = Parser.create(&VM.stdout),
             .scanner = Scanner.create(),
         };
@@ -213,7 +213,7 @@ pub const Instance = struct {
         self.compiler.init();
     }
 
-    pub fn compile(self: *Instance, source: []const u8) !Obj {
+    pub fn compile(self: *Instance, source: []const u8) !*Obj {
         self.scanner.init(source);
         self.parser.had_error = false;
         self.parser.had_panic = false;
@@ -233,21 +233,19 @@ pub const Instance = struct {
         }
     }
 
-    fn end(self: *Instance) !Obj {
+    fn end(self: *Instance) !*Obj {
         self.emitReturn();
 
-        if (self.parser.had_error) {
+        if (self.parser.had_error)
             return error.ParseError;
-        }
 
-        const func = self.currentFunction();
         if (verbose)
             self.currentChunk().disassemble("Chunk");
 
-        var comp = if (self.current) |_| self.current.? else &self.compiler;
-        self.current = comp.enclosing;
-        
-        return func.*;
+        const func = self.currentFunction();
+        if (self.current) |c| self.current = c.enclosing;
+
+        return func;
     }
 
     fn consume(self: *Instance, token_type: TokenType, message: []const u8) void {
@@ -260,12 +258,12 @@ pub const Instance = struct {
     }
 
     fn currentChunk(self: Instance) *Chunk {
-        var comp = if (self.current) |_| self.current.? else &self.compiler;
+        var comp = if (self.current) |c| c else &self.compiler;
         return &comp.function.data.Function.chunk;
     }
 
     fn currentFunction(self: Instance) *Obj {
-        var comp = if (self.current) |_| self.current.? else &self.compiler;
+        var comp = if (self.current) |c| c else &self.compiler;
         return comp.function;
     }
 
@@ -405,6 +403,9 @@ pub const Instance = struct {
     }
 
     fn declaration(self: *Instance) !void {
+        if (self.match(TokenType.Class)) {
+            self.classDeclaration();
+        }
         if (self.match(TokenType.Fn)) {
             try self.fnDeclaration();
         } else if (self.match(TokenType.Var)) {
@@ -429,6 +430,19 @@ pub const Instance = struct {
             }
             self.advance();
         }
+    }
+
+    fn classDeclaration(self: *Instance) void {
+        self.consume(.Identifier, "Expect class name.");
+        const nameConstant = self.identifierConstant(self.parser.previous);
+        self.declareVariable();
+
+        self.emitOpCode(.Class);
+        self.emitByte(nameConstant);
+        self.defineVariable(nameConstant);
+
+        self.consume(.LeftBrace, "Expect '{' before class body.");
+        self.consume(.RightBrace, "Expect '}' after class body.");
     }
 
     fn fnDeclaration(self: *Instance) !void {
@@ -469,7 +483,8 @@ pub const Instance = struct {
 
         // Function Object
         var func = try self.end();
-        self.emitConstant(func.value());
+
+        self.emitBytes(@enumToInt(OpCode.Closure), self.makeConstant(func.value()));
 
         var i: usize = 0;
         while (i < func.data.Function.upvalueCount) : (i += 1) {
@@ -531,7 +546,7 @@ pub const Instance = struct {
     }
 
     fn resolveLocal(self: *Instance, compiler: *Compiler, name: Token) !u8 {
-        var i : i32 = @intCast(i32, compiler.local_count) - 1;
+        var i: i32 = @intCast(i32, compiler.local_count) - 1;
         while (i >= 0) : (i -= 1) {
             const local_index = @intCast(u8, i);
             const local = &compiler.locals[local_index];
@@ -656,6 +671,19 @@ pub const Instance = struct {
         const arg_count = self.argumentList();
         self.emitOpCode(.Call);
         self.emitByte(arg_count);
+    }
+
+    fn dot(self: *Instance, canAssign: bool) void {
+        self.consume(.Identifier, "Expect property name after '.'.");
+        const name = self.identifierConstant(self.parser.previous);
+        if (canAssign and self.match(.Equal)) {
+            self.expression();
+            self.emitOpCode(.SetProperty);
+            self.emitByte(name);
+        } else {
+            self.emitOpCode(.GetProperty);
+            self.emitByte(name);
+        }
     }
 
     fn argumentList(self: *Instance) u8 {

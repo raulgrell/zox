@@ -1,20 +1,3 @@
-var globalOne;
-var globalTwo;
-
-fn main() {
-  var a = "one";
-  fn one() {
-    print a;
-  }
-  globalOne = one;
-
-  var b = "two";
-  fn two() {
-    print b;
-  }
-  globalTwo = two;
-}
-
-main();
-globalOne();
-globalTwo();
+class Toast {}
+var toast = Toast();
+print toast.jam = "grape";

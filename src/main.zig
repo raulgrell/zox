@@ -24,6 +24,8 @@ pub fn main() !void {
 
     vm = VM.create();
     vm.instance.init();
+    
+    try vm.stack.ensureCapacity(1024);
     vm.defineNative("clock", lib.clockNative);
 
     defer vm.destroy();
@@ -31,7 +33,10 @@ pub fn main() !void {
     switch(args_list.len) {
         1 => try runRepl(),
         2 => try runFile(args_list.at(1)),
-        3 => try vm.interpret(example_file),
+        3 => {
+            try vm.interpret(example_file);
+            vm.flush();
+        },
         else => showUsage()
     }
 }

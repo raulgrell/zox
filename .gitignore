@@ -1,6 +1,6 @@
 # Development
 .vscode/
-todo/
+*.code-workspace
 
 # Zig artifacts
 build/
