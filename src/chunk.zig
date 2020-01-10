@@ -115,7 +115,7 @@ pub const Chunk = struct {
             OpCode.JumpIfFalse => return jumpInstruction("JumpIfFalse", 1, chunk, offset),
             OpCode.Jump => return jumpInstruction("Jump", 1, chunk, offset),
             OpCode.Loop => return jumpInstruction("Loop", -1, chunk, offset),
-            OpCode.Class => return constantInstruction("OP_CLASS", chunk, offset),
+            OpCode.Class => return constantInstruction("Class", chunk, offset),
             OpCode.GetProperty => return constantInstruction("GetProperty", chunk, offset),
             OpCode.SetProperty => return constantInstruction("SetProperty", chunk, offset),
             OpCode.Return => return simpleInstruction("Return", offset),
@@ -124,14 +124,15 @@ pub const Chunk = struct {
                 const constant = chunk.code.at(offset + 1);
                 std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.at(constant).toString() });
                 const function = chunk.constants.at(constant).Obj.data.Function;
-                var j: usize = 0;
-                while (j < function.upvalueCount) : (j += 1) {
-                    const isLocal = chunk.code.at(offset + 0) != 0;
-                    const index = chunk.code.at(offset + 1);
-                    const text = if (isLocal) "local" else "upvalue";
-                    std.debug.warn("{}: {} {}\n", .{ offset, text, index });
+                var i: usize = 0;
+                while (i < function.upvalueCount) : (i += 1) {
+                    const isLocal = chunk.code.at(offset + 2 + i) != 0;
+                    const index = chunk.code.at(offset + 3 + i);
+                    const text = if (isLocal) "Local" else "Upvalue";
+                    std.debug.warn("{}:{} | {} {}\n", .{ offset + 2 + 2 * i, line, text, index });
                 }
-                return offset + 2;
+
+                return offset + 2 + 2 * i;
             },
             else => {
                 std.debug.warn("Unknown opcode: {}\n", .{instruction});

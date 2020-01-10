@@ -195,31 +195,36 @@ pub const VM = struct {
     }
 
     pub fn captureUpvalue(self: *VM, local: *Value) *Obj {
-        var prevUpvalue: ?*Obj = null;
-        var upvalue = self.openUpvalues;
-        while (upvalue) |u| {
-            if (@ptrToInt(u.data.Upvalue.location) > @ptrToInt(local)) {
-                prevUpvalue = upvalue;
-                upvalue = u.next;
-            } else {
-                break;
+        if (self.openUpvalues) |o| {
+            var prevUpvalue: ?*Obj = null;
+            var upvalue: ?*Obj = o;
+            while (upvalue) |u| {
+                std.debug.warn("Upvalue: {}\n", .{@tagName(u.data)});
+                if (@ptrToInt(u.data.Upvalue.location) > @ptrToInt(local)) {
+                    prevUpvalue = upvalue;
+                    upvalue = u.next;
+                } else {
+                    break;
+                }
             }
-        }
 
-        if (upvalue) |u|
-            if (u.data.Upvalue.location == local)
-                return u;
+            if (upvalue) |u|
+                if (u.data.Upvalue.location == local)
+                    return u;
 
-        var createdUpvalue = ObjUpvalue.allocate(local);
-        createdUpvalue.data.Upvalue.next = upvalue;
+            var createdUpvalue = ObjUpvalue.allocate(local, upvalue);
 
-        if (prevUpvalue) |p| {
-            p.next = createdUpvalue;
+            if (prevUpvalue) |p| {
+                p.next = createdUpvalue;
+            } else {
+                self.openUpvalues = createdUpvalue;
+            }
+
+            return createdUpvalue;
         } else {
-            self.openUpvalues = createdUpvalue;
+            self.openUpvalues = ObjUpvalue.allocate(local, null);
+            return self.openUpvalues.?;
         }
-
-        return createdUpvalue;
     }
 
     pub fn closeUpvalues(self: *VM, last: *Value) void {
@@ -246,10 +251,11 @@ pub const VM = struct {
         }
 
         var frame = &self.frames[self.frame_count];
-        self.frame_count += 1;
         frame.closure = closure;
         frame.ip = closure.data.Closure.function.chunk.ptr();
         frame.slots = @intCast(u32, self.stack.len) - arg_count - 1;
+
+        self.frame_count += 1;
     }
 
     fn defineNative(self: *VM, name: []const u8, function: ObjNative.NativeFn) void {
@@ -437,7 +443,7 @@ pub const VM = struct {
                     }
                 },
                 OpCode.CloseUpvalue => {
-                    self.closeUpvalues(self.stack.ptrAt(self.stack.len - 1));
+                    self.closeUpvalues(self.stack.ptrAt(self.stack.len - 2));
                     _ = self.pop();
                     break;
                 },
@@ -446,6 +452,7 @@ pub const VM = struct {
 
                     self.closeUpvalues(self.stack.ptrAt(frame.slots));
                     self.frame_count -= 1;
+
                     if (self.frame_count == 0) {
                         _ = self.pop();
                         return;

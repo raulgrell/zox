@@ -88,13 +88,13 @@ pub const ObjUpvalue = struct {
     closed: Value,
     next: ?*Obj,
 
-    pub fn allocate(slot: *Value) *Obj {
+    pub fn allocate(slot: *Value, next: ?*Obj) *Obj {
         var upvalue = Obj.allocate();
         upvalue.data = Obj.Data{
             .Upvalue = ObjUpvalue{
                 .closed = Value.Nil,
                 .location = slot,
-                .next = null,
+                .next = next,
             },
         };
         return upvalue;
@@ -334,7 +334,7 @@ pub fn markRoots() void {
 
     var upvalue: ?*Obj = vm.openUpvalues;
     while (upvalue) |u| : (upvalue = u.next) {
-        markObject(u);
+        // markObject(u);
     }
 
     markTable();
@@ -403,7 +403,7 @@ pub fn blackenObject(object: *Obj) void {
         .Class => |c| {},
         .Closure => |c| {
             markObject(object);
-            for (object.data.Closure.upvalues) |u| markObject(u);
+            //for (object.data.Closure.upvalues) |u| markObject(u);
         },
         .Upvalue => |u| {
             markValue(&object.data.Upvalue.closed);

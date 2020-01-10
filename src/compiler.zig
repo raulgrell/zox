@@ -578,9 +578,8 @@ pub const Instance = struct {
 
         compiler.upvalues[upvalueCount].isLocal = isLocal;
         compiler.upvalues[upvalueCount].index = index;
-        const count = compiler.function.data.Function.upvalueCount;
         compiler.function.data.Function.upvalueCount += 1;
-        return count;
+        return compiler.function.data.Function.upvalueCount - 1;
     }
 
     fn resolveUpvalue(self: *Instance, compiler: *Compiler, name: Token) anyerror!u8 {
