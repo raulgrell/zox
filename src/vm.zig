@@ -18,7 +18,7 @@ const ObjUpvalue = @import("./object.zig").ObjUpvalue;
 const ObjInstance = @import("./object.zig").ObjInstance;
 const ObjClass = @import("./object.zig").ObjClass;
 
-const verbose = true;
+const verbose = false;
 
 pub const OpCode = enum(u8) {
     Constant,
@@ -55,9 +55,13 @@ pub const OpCode = enum(u8) {
     Jump,
     Call,
     Closure,
+    Invoke,
+    Method,
+    Class,
+    Super,
+    Subclass,
     Loop,
     Return,
-    Class,
 };
 
 pub const CallFrame = struct {
@@ -96,38 +100,30 @@ pub const VM = struct {
 
     frames: [FRAMES_MAX]CallFrame,
     frame_count: u32,
+    current_frame_count: u32,
 
     stack: std.ArrayList(Value),
     strings: std.HashMap([]const u8, *Obj, ObjString.hashFn, ObjString.eqlFn),
     globals: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
     openUpvalues: ?*Obj,
     objects: ?*Obj,
-    output: *std.Buffer,
-    output_stream: *std.io.BufferOutStream,
 
     bytesAllocated: usize,
     nextGC: usize,
     grayCount: usize,
     grayStack: ?[]*Obj,
 
-    pub var output_buffer: std.Buffer = undefined;
-    pub var stdout: std.io.BufferOutStream = undefined;
-
     pub fn create() VM {
-        output_buffer = std.Buffer.initSize(allocator, 0) catch unreachable;
-        stdout = std.io.BufferOutStream.init(&output_buffer);
-
         return VM{
             .instance = Instance.create(),
             .frames = undefined,
             .frame_count = 0,
+            .current_frame_count = 0,
             .stack = std.ArrayList(Value).initCapacity(allocator, STACK_MAX) catch unreachable,
             .strings = std.HashMap([]const u8, *Obj, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .globals = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             .openUpvalues = null,
             .objects = null,
-            .output = &output_buffer,
-            .output_stream = &stdout,
             .bytesAllocated = 0,
             .nextGC = 1024 * 1024,
             .grayCount = 0,
@@ -155,8 +151,6 @@ pub const VM = struct {
         return self.stack.pop();
     }
 
-    fn popFrame(self: *VM, frame: *CallFrame) void {}
-
     fn peek(self: *VM, distance: u32) Value {
         return self.stack.at(self.stack.len - 1 - distance);
     }
@@ -168,7 +162,54 @@ pub const VM = struct {
     fn resetStack(self: *VM) void {
         self.stack.resize(0) catch unreachable;
         self.frame_count = 0;
+        self.current_frame_count = 0;
         self.openUpvalues = null;
+    }
+
+    fn runtimeError(self: *VM, comptime format: []const u8, args: var) void {
+        const frame = &self.frames[self.frame_count - 1];
+        const instruction = @ptrToInt(frame.ip) - @ptrToInt(frame.closure.data.Closure.function.chunk.ptr());
+        const line = frame.closure.data.Closure.function.chunk.getLine(instruction);
+
+        std.debug.warn("Runtime error on line {}: ", .{line});
+        std.debug.warn(format, args);
+        std.debug.warn("\n", .{});
+
+        var i = self.frame_count - 1;
+        while (i > 0) : (i -= 1) {
+            const prev_frame = &self.frames[i];
+            const function = prev_frame.closure.data.Closure.function;
+            const offset = @ptrToInt(prev_frame.ip) - @ptrToInt(function.chunk.ptr());
+
+            std.debug.warn("[line {}] in ", .{function.chunk.getLine(@intCast(usize, offset))});
+
+            if (function.name) |n| {
+                std.debug.warn("{}()\n", .{n.data.String.bytes});
+            } else {
+                std.debug.warn("script\n", .{});
+            }
+        }
+
+        self.resetStack();
+    }
+
+    fn printDebug(self: *VM) void {
+        const frame = &self.frames[self.frame_count - 1];
+        const instruction = @ptrToInt(frame.ip) - @ptrToInt(frame.closure.data.Closure.function.chunk.ptr());
+        for (self.stack.toSlice()) |s, i| {
+            std.debug.warn("[{}]\n", .{s.toString()});
+        }
+        _ = frame.closure.data.Closure.function.chunk.disassembleInstruction(instruction);
+        std.debug.warn("\n", .{});
+    }
+
+    pub fn print(self: *VM, value: Value) void {
+        const string = value.toString();
+        std.debug.warn("{}", .{string});
+    }
+
+    pub fn puts(self: *VM, string: []const u8) void {
+        std.debug.warn("{}", .{string});
     }
 
     fn callValue(self: *VM, callee: Value, arg_count: u8) !void {
@@ -199,9 +240,8 @@ pub const VM = struct {
             var prevUpvalue: ?*Obj = null;
             var upvalue: ?*Obj = o;
             while (upvalue) |u| {
-                std.debug.warn("Upvalue: {}\n", .{@tagName(u.data)});
                 if (@ptrToInt(u.data.Upvalue.location) > @ptrToInt(local)) {
-                    prevUpvalue = upvalue;
+                    prevUpvalue = u;
                     upvalue = u.next;
                 } else {
                     break;
@@ -213,7 +253,6 @@ pub const VM = struct {
                     return u;
 
             var createdUpvalue = ObjUpvalue.allocate(local, upvalue);
-
             if (prevUpvalue) |p| {
                 p.next = createdUpvalue;
             } else {
@@ -232,7 +271,7 @@ pub const VM = struct {
             if (@ptrToInt(u.data.Upvalue.location) >= @ptrToInt(last)) {
                 u.data.Upvalue.closed = u.data.Upvalue.location.*;
                 u.data.Upvalue.location = &u.data.Upvalue.closed;
-                self.openUpvalues = u.next;
+                self.openUpvalues = u.data.Upvalue.next;
             } else {
                 return;
             }
@@ -241,7 +280,10 @@ pub const VM = struct {
 
     fn call(self: *VM, closure: *Obj, arg_count: u8) !void {
         if (arg_count != closure.data.Closure.function.arity) {
-            self.runtimeError("Expected {} arguments but got {}.", .{ closure.data.Closure.function.arity, arg_count });
+            self.runtimeError("Expected {} arguments but got {}.", .{
+                closure.data.Closure.function.arity,
+                arg_count,
+            });
             return error.UnexpectedArgs;
         }
 
@@ -254,7 +296,6 @@ pub const VM = struct {
         frame.closure = closure;
         frame.ip = closure.data.Closure.function.chunk.ptr();
         frame.slots = @intCast(u32, self.stack.len) - arg_count - 1;
-
         self.frame_count += 1;
     }
 
@@ -266,61 +307,27 @@ pub const VM = struct {
         _ = self.pop();
     }
 
-    fn runtimeError(self: *VM, comptime format: []const u8, args: var) void {
-        const frame = &self.frames[self.frame_count - 1];
-        const instruction = @ptrToInt(frame.ip) - @ptrToInt(frame.closure.data.Closure.function.chunk.ptr());
-        const line = frame.closure.data.Closure.function.chunk.getLine(instruction);
+    fn defineMethod(self: *VM, name: *ObjString) void {
+        const method = self.peek(0);
+        const class = self.peek(1).Obj.data.Class;
+        //tableSet(class.methods, name, method);
+        _ = self.pop();
+    }
 
-        self.output_stream.stream.print("Runtime error on line {}: ", .{line}) catch unreachable;
-        self.output_stream.stream.print(format, args) catch unreachable;
-        self.output_stream.stream.print("\n", .{}) catch unreachable;
+    fn createClass(self: *VM, name: *ObjString, superclass: ?*ObjClass) void {
+        const class = ObjClass.allocate(name, superclass);
+        self.push(class.value());
 
-        var i = self.frame_count - 1;
-        while (i > 0) : (i -= 1) {
-            const prev_frame = &self.frames[i];
-            const function = prev_frame.closure.data.Closure.function;
-            const offset = @ptrToInt(prev_frame.ip) - @ptrToInt(function.chunk.ptr());
-
-            std.debug.warn("[line {}] in ", .{function.chunk.getLine(@intCast(usize, offset))});
-
-            if (function.name) |n| {
-                std.debug.warn("{}()\n", .{n.data.String.bytes});
-            } else {
-                std.debug.warn("script\n", .{});
-            }
+        // Inherit methods.
+        if (superclass) |s| {
+            //tableAddAll(s.methods, class.methods);
         }
-
-        self.resetStack();
-    }
-
-    fn printDebug(self: *VM) !void {
-        const frame = &self.frames[self.frame_count - 1];
-        const instruction = @ptrToInt(frame.ip) - @ptrToInt(frame.closure.data.Closure.function.chunk.ptr());
-        for (self.stack.toSlice()) |s, i| {
-            try self.output_stream.stream.print("[{}]\n", .{s.toString()});
-        }
-        _ = frame.closure.data.Closure.function.chunk.disassembleInstruction(instruction);
-        try self.output_stream.stream.print("\n", .{});
-    }
-
-    pub fn print(self: *VM, value: Value) void {
-        const string = value.toString();
-        self.output.append(string) catch unreachable;
-    }
-
-    pub fn puts(self: *VM, string: []const u8) void {
-        self.output.append(string) catch unreachable;
-    }
-
-    pub fn flush(self: *VM) void {
-        std.debug.warn("{}", .{self.output.toSliceConst()});
-        self.output.resize(0) catch unreachable;
     }
 
     fn run(self: *VM) !void {
         var frame = &self.frames[self.frame_count - 1];
         while (true) {
-            if (verbose) try self.printDebug();
+            if (verbose) self.printDebug();
             const instruction = @intToEnum(OpCode, frame.readByte());
             switch (instruction) {
                 OpCode.Constant => {
@@ -345,16 +352,6 @@ pub const VM = struct {
                     _ = try self.globals.put(name.bytes, value);
                     const popped = self.pop();
                 },
-                OpCode.GetUpvalue => {
-                    const slot = frame.readByte();
-                    self.push(frame.closure.data.Closure.upvalues[slot].data.Upvalue.location.*);
-                    break;
-                },
-                OpCode.SetUpvalue => {
-                    const slot = frame.readByte();
-                    frame.closure.data.Closure.upvalues[slot].data.Upvalue.location.* = self.peek(0);
-                    break;
-                },
                 OpCode.GetGlobal => {
                     const name = frame.readString();
                     var value = self.globals.get(name.bytes) orelse {
@@ -370,6 +367,14 @@ pub const VM = struct {
                         self.runtimeError("Undefined variable '{}'.", .{name.bytes});
                         return error.RuntimeError;
                     };
+                },
+                OpCode.GetUpvalue => {
+                    const slot = frame.readByte();
+                    self.push(frame.closure.data.Closure.upvalues[slot].data.Upvalue.location.*);
+                },
+                OpCode.SetUpvalue => {
+                    const slot = frame.readByte();
+                    frame.closure.data.Closure.upvalues[slot].data.Upvalue.location.* = self.peek(0);
                 },
                 OpCode.Equal => {
                     const b = self.pop();
@@ -445,7 +450,6 @@ pub const VM = struct {
                 OpCode.CloseUpvalue => {
                     self.closeUpvalues(self.stack.ptrAt(self.stack.len - 2));
                     _ = self.pop();
-                    break;
                 },
                 OpCode.Return => {
                     const result = self.pop();
@@ -463,8 +467,18 @@ pub const VM = struct {
                     frame = &self.frames[self.frame_count - 1];
                 },
                 OpCode.Class => {
-                    const class = ObjClass.allocate(frame.readString());
-                    self.push(class.value());
+                    self.createClass(frame.readString(), null);
+                },
+                OpCode.Subclass => {
+                    const superclass = self.peek(0);
+                    if (superclass.Obj.data != .Class) {
+                        self.runtimeError("Superclass must be a class", .{});
+                        return error.RuntimeError;
+                    }
+                    self.createClass(frame.readString(), &superclass.Obj.data.Class);
+                },
+                OpCode.Method => {
+                    self.defineMethod(frame.readString());
                 },
                 OpCode.GetProperty => {
                     if (self.peek(0).Obj.data != .Instance) {
@@ -593,7 +607,6 @@ pub const VM = struct {
         self.stack.deinit();
         self.globals.deinit();
         self.strings.deinit();
-        self.output.deinit();
         self.freeObjects();
     }
 };

@@ -120,12 +120,14 @@ pub const ObjClosure = struct {
 
 pub const ObjClass = struct {
     name: *ObjString,
+    super: ?*ObjClass,
 
-    pub fn allocate(name: *ObjString) *Obj {
+    pub fn allocate(name: *ObjString, super: ?*ObjClass) *Obj {
         const closure = Obj.allocate();
         closure.data = Obj.Data{
             .Class = ObjClass{
                 .name = name,
+                .super = super,
             },
         };
         return closure;
@@ -145,6 +147,22 @@ pub const ObjInstance = struct {
             },
         };
         return instance;
+    }
+};
+
+pub const ObjBoundMethod = struct {
+    receiver: Value,
+    method: *ObjClosure,
+
+    pub fn allocate(receiver: Value, method: *ObjClosure) *Obj {
+        const bound_method = Obj.allocate();
+        bound_method.data = Obj.Data{
+            .BoundMethod = ObjBoundMethod{
+                .receiver = receiver,
+                .method = method,
+            },
+        };
+        return bound_method;
     }
 };
 
@@ -375,10 +393,10 @@ pub fn markTable() void {
 }
 
 pub fn markCompilerRoots() void {
-    const compiler = current;
-    while (compiler != null) {
-        markObject(compiler.function);
-        compiler = compiler.enclosing;
+    var compiler: ?*Compiler = current;
+    while (compiler) |c| {
+        markObject(c.function);
+        compiler = c.enclosing;
     }
 }
 

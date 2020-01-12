@@ -2,19 +2,21 @@ const std = @import("std");
 
 const Keyword = struct {
     token_type: TokenType,
-    name: []const u8
+    name: []const u8,
 };
 
 fn keyword(token_type: TokenType, name: []const u8) Keyword {
-    return Keyword {
+    return Keyword{
         .token_type = token_type,
-        .name = name
+        .name = name,
     };
 }
 
-pub const keywords = [_]Keyword {
+pub const keywords = [_]Keyword{
     keyword(TokenType.And, "and"),
+    keyword(TokenType.Break, "break"),
     keyword(TokenType.Class, "class"),
+    keyword(TokenType.Continue, "continue"),
     keyword(TokenType.Const, "const"),
     keyword(TokenType.Else, "else"),
     keyword(TokenType.False, "false"),
@@ -25,11 +27,13 @@ pub const keywords = [_]Keyword {
     keyword(TokenType.Or, "or"),
     keyword(TokenType.Print, "print"),
     keyword(TokenType.Return, "return"),
+    keyword(TokenType.Static, "static"),
     keyword(TokenType.Super, "super"),
     keyword(TokenType.This, "this"),
     keyword(TokenType.True, "true"),
     keyword(TokenType.Var, "var"),
-    keyword(TokenType.While, "while")
+    keyword(TokenType.With, "with"),
+    keyword(TokenType.While, "while"),
 };
 
 pub const Token = struct {
@@ -38,25 +42,74 @@ pub const Token = struct {
     line: u32,
 
     pub fn create(token_type: TokenType, lexeme: []const u8, line: u32) Token {
-        return Token {
+        return Token{
             .token_type = token_type,
             .lexeme = lexeme,
             .line = line,
+        };
+    }
+
+    pub fn symbol(name: []const u8) Token {
+        return Token {
+            .token_type = TokenType.Identifier,
+            .lexeme = name,
+            .line = 0,
         };
     }
 };
 
 pub const TokenType = enum {
     // Punctuation
-    LeftParen, RightParen, LeftBrace, RightBrace, Comma, Dot, Colon, Semicolon,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    Comma,
+    Dot,
+    Colon,
+    Semicolon,
     // Operators
-    Slash, Star, Minus, Plus, Bang, BangEqual, Equal, EqualEqual, Greater, GreaterEqual, Less, LessEqual,
+    Slash,
+    Star,
+    Minus,
+    Plus,
+    Bang,
+    BangEqual,
+    Equal,
+    EqualEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
     // Keywords
-    And, Class, Const, Else, False, Fn, For, If, Nil, Or, Print, Return, Super, This, True, Var, While,
+    And,
+    Break,
+    Class,
+    Continue,
+    Const,
+    Else,
+    False,
+    Fn,
+    For,
+    If,
+    Nil,
+    Or,
+    Print,
+    Return,
+    Static,
+    Super,
+    This,
+    True,
+    Var,
+    With,
+    While,
     // Literals
-    Identifier, String, Number,
+    Identifier,
+    String,
+    Number,
     // Control
-    Error, EOF
+    Error,
+    EOF,
 };
 
 pub const Scanner = struct {
@@ -65,10 +118,10 @@ pub const Scanner = struct {
     line: u32,
 
     pub fn create() Scanner {
-        return Scanner {
+        return Scanner{
             .start = undefined,
             .current = 0,
-            .line = 0
+            .line = 0,
         };
     }
 
@@ -118,7 +171,7 @@ pub const Scanner = struct {
                     return self.makeToken(TokenType.EOF);
                 }
                 return self.makeError("Unexpected character");
-            }
+            },
         }
     }
 
@@ -186,7 +239,7 @@ pub const Scanner = struct {
                 },
                 else => {
                     return;
-                }
+                },
             }
         }
     }
@@ -199,7 +252,7 @@ pub const Scanner = struct {
 
     fn identifierType(self: *Scanner) TokenType {
         const text = self.start[0..self.current];
-        for(keywords) |kw, i| {
+        for (keywords) |kw, i| {
             if (std.mem.eql(u8, kw.name, text)) return kw.token_type;
         }
         return TokenType.Identifier;
@@ -210,16 +263,16 @@ pub const Scanner = struct {
             if (self.peek() == '\n') self.line += 1;
             _ = self.advance();
         }
-        
+
         if (self.isAtEnd()) {
             return self.makeError("Unterminated string.");
         }
-        
+
         // The closing ".
         _ = self.advance();
 
         // Trim the surrounding quotes.
-        return self.makeLiteral(TokenType.String, self.start[1..self.current - 1]);
+        return self.makeLiteral(TokenType.String, self.start[1 .. self.current - 1]);
     }
 
     fn readNumber(self: *Scanner) Token {

@@ -115,11 +115,15 @@ pub const Chunk = struct {
             OpCode.JumpIfFalse => return jumpInstruction("JumpIfFalse", 1, chunk, offset),
             OpCode.Jump => return jumpInstruction("Jump", 1, chunk, offset),
             OpCode.Loop => return jumpInstruction("Loop", -1, chunk, offset),
-            OpCode.Class => return constantInstruction("Class", chunk, offset),
             OpCode.GetProperty => return constantInstruction("GetProperty", chunk, offset),
             OpCode.SetProperty => return constantInstruction("SetProperty", chunk, offset),
             OpCode.Return => return simpleInstruction("Return", offset),
             OpCode.Call => return byteInstruction("Call", chunk, offset),
+            OpCode.Class => return constantInstruction("Class", chunk, offset),
+            OpCode.Subclass => return constantInstruction("Subclass", chunk, offset),
+            OpCode.Method => return constantInstruction("Method", chunk, offset),
+            OpCode.Invoke => return invokeInstruction("Invoke", chunk, offset),
+            OpCode.Super => return invokeInstruction("Super", chunk, offset),
             OpCode.Closure => {
                 const constant = chunk.code.at(offset + 1);
                 std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.at(constant).toString() });
@@ -139,6 +143,18 @@ pub const Chunk = struct {
                 return offset + 1;
             },
         }
+    }
+
+    pub fn invokeInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
+        const argCount = chunk.code.at(offset + 1);
+        const constant = chunk.code.at(offset + 2);
+        std.debug.warn("{} ({} args) {} '{}'\n", .{
+            name,
+            argCount,
+            constant,
+            chunk.constants.at(constant).toString(),
+        });
+        return offset + 2;
     }
 
     fn jumpInstruction(name: []const u8, sign: i32, chunk: *const Chunk, offset: usize) usize {

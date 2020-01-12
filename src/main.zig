@@ -23,20 +23,15 @@ pub fn main() !void {
     }
 
     vm = VM.create();
-    vm.instance.init();
+    defer vm.destroy();
     
     try vm.stack.ensureCapacity(1024);
     vm.defineNative("clock", lib.clockNative);
 
-    defer vm.destroy();
-
     switch(args_list.len) {
         1 => try runRepl(),
         2 => try runFile(args_list.at(1)),
-        3 => {
-            try vm.interpret(example_file);
-            vm.flush();
-        },
+        3 => try vm.interpret(example_file),
         else => showUsage()
     }
 }
@@ -54,14 +49,12 @@ fn runRepl() !void {
         std.debug.warn("> ", .{});
         const source = try std.io.readLineSlice(line[0..]);
         const result = vm.interpret(source);
-        vm.flush();
     }
 }
 
 fn runFile(path: []const u8) !void {
     const source = try std.io.readFileAlloc(allocator, path);
     const result = vm.interpret(source);
-    vm.flush();
 }
 
 fn showUsage() void {

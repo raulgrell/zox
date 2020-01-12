@@ -20,15 +20,13 @@ pub const Parser = struct {
     previous: Token,
     had_error: bool,
     had_panic: bool,
-    output_stream: *std.io.BufferOutStream,
 
-    pub fn create(output_stream: *std.io.BufferOutStream) Parser {
+    pub fn create() Parser {
         return Parser{
             .current = undefined,
             .previous = undefined,
             .had_error = false,
             .had_panic = false,
-            .output_stream = output_stream,
         };
     }
 
@@ -44,17 +42,17 @@ pub const Parser = struct {
         if (self.had_panic) return;
         self.had_panic = true;
 
-        self.output_stream.stream.print("[line {}] Error", .{token.line}) catch unreachable;
+        std.debug.warn("[line {}] Error", .{token.line});
 
         if (token.token_type == TokenType.EOF) {
-            self.output_stream.stream.print(" at end", .{}) catch unreachable;
+            std.debug.warn(" at end", .{});
         } else if (token.token_type == TokenType.Error) {
             // Nothing.
         } else {
-            self.output_stream.stream.print(" at '{}'", .{token.lexeme}) catch unreachable;
+            std.debug.warn(" at '{}'", .{token.lexeme});
         }
 
-        self.output_stream.stream.print(": {}\n", .{message}) catch unreachable;
+        std.debug.warn(": {}\n", .{message});
         self.had_error = true;
     }
 };
@@ -148,6 +146,9 @@ const rules: [num_rules]ParseRule = blk: {
 
 const FunctionType = enum {
     Function,
+    Initializer,
+    Method,
+    Static,
     Script,
 };
 
@@ -160,8 +161,9 @@ pub const Compiler = struct {
     locals: [256]Local,
     local_count: u32,
     scope_depth: u32,
+    loop_depth: u32,
 
-    pub fn create(current: ?*Compiler, T: FunctionType) Compiler {
+    pub fn create(current: ?*Compiler, scope_depth: u32, T: FunctionType) Compiler {
         return Compiler{
             .enclosing = current,
             .function = ObjFunction.allocate(),
@@ -169,16 +171,42 @@ pub const Compiler = struct {
             .upvalues = undefined,
             .locals = undefined,
             .local_count = 0,
-            .scope_depth = 0,
+            .scope_depth = scope_depth,
+            .loop_depth = 0,
         };
     }
 
-    pub fn init(self: *Compiler) void {
+    pub fn init(self: *Compiler, instance: *Instance) void {
+        instance.current = self;
+
+        switch (self.T) {
+            .Initializer, .Method, .Static, .Function => {
+                self.function.data.Function.name = ObjString.copy(instance.parser.previous.lexeme);
+            },
+            .Script => self.function.data.Function.name = null,
+        }
+
+        const hasReceiver = self.T != .Function and self.T != .Static;
+        
         var local = &self.locals[@intCast(u32, self.local_count)];
-        local.depth = 0;
+        local.depth = @intCast(i32, self.scope_depth);
         local.isCaptured = false;
-        local.name.lexeme = "";
+        local.name.lexeme = if (hasReceiver) "this" else "";
         self.local_count += 1;
+    }
+};
+
+const ClassCompiler = struct {
+    enclosing: *ClassCompiler,
+    name: Token,
+    hasSuperclass: bool,
+
+    pub fn create() ClassCompiler {
+        return ClassCompiler{
+            .enclosing = undefined,
+            .name = undefined,
+            .hasSuperclass = undefined,
+        };
     }
 };
 
@@ -195,31 +223,41 @@ pub const Upvalue = struct {
 
 pub const Instance = struct {
     compiler: Compiler,
-    current: ?*Compiler,
+    current: *Compiler,
+    currentClass: *ClassCompiler,
     parser: Parser,
     scanner: Scanner,
+    innermostLoopStart: u32,
+    innermostLoopScopeDepth: u32,
 
     pub fn create() Instance {
         return Instance{
-            .compiler = Compiler.create(null, .Script),
-            .current = null,
-            .parser = Parser.create(&VM.stdout),
+            .compiler = Compiler.create(null, 0, .Script),
+            .current = undefined,
+            .currentClass = undefined,
+            .parser = Parser.create(),
             .scanner = Scanner.create(),
+            .innermostLoopStart = 0,
+            .innermostLoopScopeDepth = 0,
         };
     }
 
     pub fn init(self: *Instance) void {
         self.current = &self.compiler;
-        self.compiler.init();
     }
 
     pub fn compile(self: *Instance, source: []const u8) !*Obj {
         self.scanner.init(source);
+
+        self.compiler.init(self);
+
         self.parser.had_error = false;
         self.parser.had_panic = false;
         self.advance();
+
         while (!self.match(.EOF))
             try self.declaration();
+
         return self.end();
     }
 
@@ -233,6 +271,16 @@ pub const Instance = struct {
         }
     }
 
+    fn match(self: *Instance, token_type: TokenType) bool {
+        if (!self.check(token_type)) return false;
+        self.advance();
+        return true;
+    }
+
+    fn check(self: *Instance, token_type: TokenType) bool {
+        return self.parser.current.token_type == token_type;
+    }
+
     fn end(self: *Instance) !*Obj {
         self.emitReturn();
 
@@ -242,8 +290,8 @@ pub const Instance = struct {
         if (verbose)
             self.currentChunk().disassemble("Chunk");
 
-        const func = self.currentFunction();
-        if (self.current) |c| self.current = c.enclosing;
+        const func = self.current.function;
+        self.current = if (self.current.enclosing) |e| e else &self.compiler;
 
         return func;
     }
@@ -258,13 +306,7 @@ pub const Instance = struct {
     }
 
     fn currentChunk(self: Instance) *Chunk {
-        var comp = if (self.current) |c| c else &self.compiler;
-        return &comp.function.data.Function.chunk;
-    }
-
-    fn currentFunction(self: Instance) *Obj {
-        var comp = if (self.current) |c| c else &self.compiler;
-        return comp.function;
+        return &self.current.function.data.Function.chunk;
     }
 
     fn statement(self: *Instance) !void {
@@ -276,6 +318,14 @@ pub const Instance = struct {
             self.returnStatement();
         } else if (self.match(.While)) {
             try self.whileStatement();
+        } else if (self.match(.With)) {
+            self.withStatement();
+        } else if (self.match(.Break)) {
+            self.breakStatement();
+        } else if (self.match(.Continue)) {
+            self.continueStatement();
+        } else if (self.match(.For)) {
+            self.forStatement();
         } else if (self.match(.LeftBrace)) {
             self.beginScope();
             try self.block();
@@ -285,11 +335,16 @@ pub const Instance = struct {
         }
     }
 
+    fn withStatement(self: *Instance) void {}
+    fn breakStatement(self: *Instance) void {}
+    fn continueStatement(self: *Instance) void {}
+    fn forStatement(self: *Instance) void {}
+
     fn printStatement(self: *Instance) void {
         if (verbose_parse) std.debug.warn("S | Print\n", .{});
         self.expression();
         self.consume(TokenType.Semicolon, "Expect ';' after value.");
-        self.emitOpCode(OpCode.Print);
+        self.emitOpCode(.Print);
     }
 
     fn ifStatement(self: *Instance) anyerror!void {
@@ -314,13 +369,16 @@ pub const Instance = struct {
     fn returnStatement(self: *Instance) void {
         if (verbose_parse) std.debug.warn("S | Return\n", .{});
 
-        if (self.current.?.T == .Script) {
+        if (self.current.T == .Script) {
             self.parser.errorAtPrevious("Cannot return from top-level code.");
         }
 
         if (self.match(.Semicolon)) {
             self.emitReturn();
         } else {
+            if (self.current.T == .Initializer) {
+                self.parser.errorAtPrevious("Cannot return from an initializer");
+            }
             self.expression();
             self.consume(.Semicolon, "Expect ';' after return value.");
             self.emitOpCode(.Return);
@@ -337,8 +395,16 @@ pub const Instance = struct {
     }
 
     fn whileStatement(self: *Instance) anyerror!void {
-        if (verbose_parse) std.debug.warn("S | While\n", .{});
-        const loopStart = @intCast(i32, self.currentChunk().code.len);
+        if (verbose_parse)
+            std.debug.warn("S | While\n", .{});
+
+        self.current.loop_depth += 1;
+
+        const surroundingLoopStart = self.innermostLoopStart;
+        const surroundingLoopScopeDepth = self.innermostLoopScopeDepth;
+        self.innermostLoopStart = @intCast(u32, self.currentChunk().code.len);
+        self.innermostLoopScopeDepth = self.current.scope_depth;
+
         self.consume(.LeftParen, "Expect '(' after 'while'.");
         self.expression();
         self.consume(.RightParen, "Expect ')' after condition.");
@@ -348,10 +414,15 @@ pub const Instance = struct {
         self.emitOpCode(.Pop);
         try self.statement();
 
-        self.emitLoop(loopStart);
+        self.emitLoop(@intCast(i32, self.innermostLoopStart));
 
         self.patchJump(exitJump);
         self.emitOpCode(.Pop);
+
+        self.innermostLoopStart = surroundingLoopStart;
+        self.innermostLoopScopeDepth = surroundingLoopScopeDepth;
+
+        self.current.loop_depth -= 1;
     }
 
     fn expression(self: *Instance) void {
@@ -359,7 +430,21 @@ pub const Instance = struct {
     }
 
     fn beginScope(self: *Instance) void {
-        self.current.?.scope_depth += 1;
+        self.current.scope_depth += 1;
+    }
+
+    fn endScope(self: *Instance) void {
+        self.current.scope_depth -= 1;
+        var next_index = @intCast(u8, self.current.local_count - 1);
+        while (self.current.local_count > 0 and self.current.locals[next_index].depth > self.current.scope_depth) {
+            if (self.current.locals[self.current.local_count - 1].isCaptured) {
+                self.emitOpCode(.CloseUpvalue);
+            } else {
+                self.emitOpCode(.Pop);
+            }
+            self.current.local_count -= 1;
+            next_index = @intCast(u8, self.current.local_count);
+        }
     }
 
     fn block(self: *Instance) anyerror!void {
@@ -370,43 +455,17 @@ pub const Instance = struct {
         self.consume(.RightBrace, "Expect '}' after block.");
     }
 
-    fn endScope(self: *Instance) void {
-        const curr = self.current.?;
-        curr.scope_depth -= 1;
-        var next_index = @intCast(u8, curr.local_count - 1);
-        while (curr.local_count > 0 and curr.locals[next_index].depth > curr.scope_depth) {
-            if (curr.locals[curr.local_count - 1].isCaptured) {
-                self.emitOpCode(.CloseUpvalue);
-            } else {
-                self.emitOpCode(.Pop);
-            }
-            curr.local_count -= 1;
-            next_index = @intCast(u8, curr.local_count);
-        }
-    }
-
-    fn match(self: *Instance, token_type: TokenType) bool {
-        if (!self.check(token_type)) return false;
-        self.advance();
-        return true;
-    }
-
-    fn check(self: *Instance, token_type: TokenType) bool {
-        return self.parser.current.token_type == token_type;
-    }
-
     fn expressionStatement(self: *Instance) void {
         if (verbose_parse) std.debug.warn("S | Expression\n", .{});
         self.expression();
-        self.emitOpCode(OpCode.Pop);
+        self.emitOpCode(.Pop);
         self.consume(TokenType.Semicolon, "Expect ';' after expression.");
     }
 
     fn declaration(self: *Instance) !void {
         if (self.match(TokenType.Class)) {
-            self.classDeclaration();
-        }
-        if (self.match(TokenType.Fn)) {
+            try self.classDeclaration();
+        } else if (self.match(TokenType.Fn)) {
             try self.fnDeclaration();
         } else if (self.match(TokenType.Var)) {
             self.varDeclaration();
@@ -415,7 +474,10 @@ pub const Instance = struct {
         } else {
             try self.statement();
         }
-        if (self.parser.had_panic) self.synchronize();
+
+        if (self.parser.had_panic) {
+            self.synchronize();
+        }
     }
 
     fn synchronize(self: *Instance) void {
@@ -426,37 +488,89 @@ pub const Instance = struct {
 
             switch (self.parser.current.token_type) {
                 .Class, .Fn, .Var, .Const, .For, .If, .While, .Print, .Return => return,
-                else => {},
+                else => {
+                    self.advance();
+                },
             }
-            self.advance();
         }
     }
 
-    fn classDeclaration(self: *Instance) void {
+    fn classDeclaration(self: *Instance) !void {
+        if (verbose_parse) std.debug.warn("S | Class\n", .{});
         self.consume(.Identifier, "Expect class name.");
         const nameConstant = self.identifierConstant(self.parser.previous);
         self.declareVariable();
 
-        self.emitOpCode(.Class);
-        self.emitByte(nameConstant);
-        self.defineVariable(nameConstant);
+        var classCompiler = ClassCompiler.create();
+        classCompiler.name = self.parser.previous;
+        classCompiler.hasSuperclass = false;
+        classCompiler.enclosing = self.currentClass;
+        self.currentClass = &classCompiler;
+
+        // TODO: use colon?
+        if (self.match(.Less)) {
+            if (verbose_parse) std.debug.warn("S | Superclass\n", .{});
+            self.consume(.Identifier, "Expect superclass name");
+            classCompiler.hasSuperclass = true;
+
+            self.beginScope();
+            self.variable(false);
+            self.addLocal(Token.symbol("super"));
+
+            self.emitOpCode(.Subclass);
+            self.emitByte(nameConstant);
+        } else {
+            self.emitOpCode(.Class);
+            self.emitByte(nameConstant);
+        }
 
         self.consume(.LeftBrace, "Expect '{' before class body.");
+        while (!self.check(.RightBrace) and !self.check(.EOF)) try self.method();
         self.consume(.RightBrace, "Expect '}' after class body.");
+
+        if (classCompiler.hasSuperclass) self.endScope();
+
+        self.defineVariable(nameConstant);
+
+        self.currentClass = self.currentClass.enclosing;
+    }
+
+    fn method(self: *Instance) !void {
+        if (verbose_parse) std.debug.warn("S | Method\n", .{});
+
+        var T: FunctionType = undefined;
+        if (self.check(.Static)) {
+            T = .Static;
+            self.consume(.Static, "Expect static.");
+        } else {
+            T = .Method;
+        }
+
+        self.consume(.Fn, "Expect method declaration.");
+        self.consume(.Identifier, "Expect method name.");
+        const constant = self.identifierConstant(self.parser.previous);
+
+        if (std.mem.eql(u8, self.parser.previous.lexeme, "init")) {
+            T = .Initializer;
+        }
+
+        try self.function(T);
+
+        self.emitOpCode(.Method);
+        self.emitByte(constant);
     }
 
     fn fnDeclaration(self: *Instance) !void {
         if (verbose_parse) std.debug.warn("S | Function\n", .{});
         const global = self.parseVariable("Expect function name.");
-        self.markInitialized();
+        self.markInitialized(); // should this be here?
         try self.function(.Function);
         self.defineVariable(global);
     }
 
     fn function(self: *Instance, fn_type: FunctionType) !void {
-        var compiler = Compiler.create(self.current, fn_type);
-        self.current = &compiler;
-        compiler.init();
+        var compiler = Compiler.create(self.current, self.current.scope_depth, fn_type);
+        compiler.init(self);
 
         self.beginScope();
         self.consume(.LeftParen, "Expect '(' after function name.");
@@ -464,12 +578,11 @@ pub const Instance = struct {
         // Parameters
         if (!self.check(.RightParen)) {
             while (true) {
-                self.currentFunction().data.Function.arity += 1;
-                if (self.currentFunction().data.Function.arity > 255)
-                    self.parser.errorAtCurrent("Cannot have more than 255 parameters.");
-
+                self.current.function.data.Function.arity += 1;
+                if (self.current.function.data.Function.arity > 32)
+                    self.parser.errorAtCurrent("Cannot have more than 32 parameters.");
                 const paramConstant = self.parseVariable("Expect parameter name.");
-                if (verbose_parse) std.debug.warn("  | Parameter\n", .{});
+                if (verbose_parse) std.debug.warn("S | Parameter\n", .{});
                 self.defineVariable(paramConstant);
                 if (!self.match(.Comma)) break;
             }
@@ -482,9 +595,11 @@ pub const Instance = struct {
         try self.block();
 
         // Function Object
-        var func = try self.end();
+        self.endScope();
+        var func = try self.end(); // TODO: Handle static
 
-        self.emitBytes(@enumToInt(OpCode.Closure), self.makeConstant(func.value()));
+        self.emitOpCode(.Closure);
+        self.emitByte(self.makeConstant(func.value()));
 
         var i: usize = 0;
         while (i < func.data.Function.upvalueCount) : (i += 1) {
@@ -510,7 +625,7 @@ pub const Instance = struct {
         if (self.match(TokenType.Equal)) {
             self.expression();
         } else {
-            self.emitOpCode(OpCode.Nil);
+            self.emitOpCode(.Nil);
         }
         self.consume(TokenType.Semicolon, "Expect ';' after variable declaration.");
         self.defineVariable(global);
@@ -519,7 +634,7 @@ pub const Instance = struct {
     fn parseVariable(self: *Instance, errorMessage: []const u8) u8 {
         self.consume(TokenType.Identifier, errorMessage);
         self.declareVariable();
-        if (self.current.?.scope_depth > 0) return 0;
+        if (self.current.scope_depth > 0) return 0;
         return self.identifierConstant(self.parser.previous);
     }
 
@@ -529,20 +644,56 @@ pub const Instance = struct {
 
     fn declareVariable(self: *Instance) void {
         // Global variables are implicitly declared.
-        if (self.current.?.scope_depth == 0) return;
+        if (self.current.scope_depth == 0) return;
 
         const name = self.parser.previous;
-        var i = self.current.?.local_count - 1;
+        var i = self.current.local_count - 1;
         while (i >= 0) : (i -= 1) {
             const local_index = @intCast(u8, i);
-            const local = &self.current.?.locals[local_index];
-            if (local.depth != -1 and local.depth < self.current.?.scope_depth) break;
+            const local = &self.current.locals[local_index];
+            if (local.depth != -1 and local.depth < self.current.scope_depth) break;
             if (identifiersEqual(name, local.name)) {
                 self.parser.errorAtPrevious("Cannot redeclare variable in this scope.");
             }
         }
 
         self.addLocal(name);
+    }
+
+    fn identifiersEqual(a: Token, b: Token) bool {
+        return std.mem.eql(u8, a.lexeme, b.lexeme);
+    }
+
+    fn identifierConstant(self: *Instance, name: Token) u8 {
+        const obj_string = ObjString.copy(name.lexeme);
+        return self.makeConstant(obj_string.value());
+    }
+
+    fn markInitialized(self: *Instance) void {
+        if (self.current.scope_depth == 0) return;
+        const local_index = @intCast(u8, self.current.local_count - 1);
+        self.current.locals[local_index].depth = @intCast(i32, self.current.scope_depth);
+    }
+
+    fn defineVariable(self: *Instance, global: u8) void {
+        if (self.current.scope_depth > 0) {
+            self.markInitialized();
+            return;
+        }
+        self.emitBytes(@enumToInt(OpCode.DefineGlobal), global);
+    }
+
+    fn addLocal(self: *Instance, name: Token) void {
+        if (self.current.local_count == 255) {
+            self.parser.errorAtPrevious("Too many local variables in function.");
+            return;
+        }
+
+        var local = &self.current.locals[@intCast(u8, self.current.local_count)];
+        local.name = name;
+        local.depth = -1;
+        local.isCaptured = false;
+        self.current.local_count += 1;
     }
 
     fn resolveLocal(self: *Instance, compiler: *Compiler, name: Token) !u8 {
@@ -596,49 +747,16 @@ pub const Instance = struct {
         }
     }
 
-    fn identifiersEqual(a: Token, b: Token) bool {
-        if (a.lexeme.len != b.lexeme.len) return false;
-        return std.mem.eql(u8, a.lexeme, b.lexeme);
-    }
-
-    fn addLocal(self: *Instance, name: Token) void {
-        if (self.current.?.local_count == 255) {
-            self.parser.errorAtPrevious("Too many local variables in function.");
-            return;
-        }
-
-        const local_index = @intCast(u8, self.current.?.local_count);
-        var local = &self.current.?.locals[local_index];
-        self.current.?.local_count += 1;
-        local.name = name;
-        local.depth = -1;
-        local.isCaptured = false;
-    }
-
-    fn identifierConstant(self: *Instance, name: Token) u8 {
-        const obj_string = ObjString.copy(name.lexeme);
-        return self.makeConstant(obj_string.value());
-    }
-
-    fn defineVariable(self: *Instance, global: u8) void {
-        if (self.current.?.scope_depth > 0) {
-            self.markInitialized();
-            return;
-        }
-        self.emitBytes(@enumToInt(OpCode.DefineGlobal), global);
-    }
-
-    fn markInitialized(self: *Instance) void {
-        if (self.current.?.scope_depth == 0) return;
-        const local_index = @intCast(u8, self.current.?.local_count - 1);
-        self.current.?.locals[local_index].depth = @intCast(i32, self.current.?.scope_depth);
-    }
-
     fn parsePrecedence(self: *Instance, precedence: Precedence) void {
         _ = self.advance();
 
         const parsePrefix = getRule(self.parser.previous.token_type).prefix;
-        if (verbose_parse) std.debug.warn("P | {}: {}\n", .{ @tagName(self.parser.previous.token_type), @tagName(precedence) });
+
+        if (verbose_parse)
+            std.debug.warn("P | {}: {}\n", .{
+                @tagName(self.parser.previous.token_type),
+                @tagName(precedence),
+            });
 
         if (parsePrefix == null) {
             self.parser.errorAtPrevious("Expect expression.");
@@ -651,7 +769,11 @@ pub const Instance = struct {
         while (precedence.isLowerThan(getRule(self.parser.current.token_type).precedence)) {
             _ = self.advance();
             const parseInfix = getRule(self.parser.previous.token_type).infix.?;
-            if (verbose_parse) std.debug.warn("I | {}: {}\n", .{ @tagName(self.parser.previous.token_type), @tagName(precedence) });
+            if (verbose_parse)
+                std.debug.warn("I | {}: {}\n", .{
+                    @tagName(self.parser.previous.token_type),
+                    @tagName(precedence),
+                });
             parseInfix(self, canAssign);
         }
 
@@ -692,8 +814,8 @@ pub const Instance = struct {
             arg_count += 1;
             while (self.match(.Comma)) {
                 self.expression();
-                if (arg_count == 255) {
-                    self.parser.errorAtPrevious("Cannot have more than 255 arguments.");
+                if (arg_count == 32) {
+                    self.parser.errorAtPrevious("Cannot have more than 32 arguments.");
                 }
                 arg_count += 1;
             }
@@ -716,8 +838,8 @@ pub const Instance = struct {
 
         // Emit the operator instruction.
         switch (operator_type) {
-            TokenType.Bang => self.emitOpCode(OpCode.Not),
-            TokenType.Minus => self.emitOpCode(OpCode.Negate),
+            TokenType.Bang => self.emitOpCode(.Not),
+            TokenType.Minus => self.emitOpCode(.Negate),
             else => unreachable,
         }
     }
@@ -733,15 +855,15 @@ pub const Instance = struct {
         // Emit the operator instruction.
         switch (operator_type) {
             TokenType.BangEqual => self.emitOpCodes(OpCode.Equal, OpCode.Not),
-            TokenType.EqualEqual => self.emitOpCode(OpCode.Equal),
-            TokenType.Greater => self.emitOpCode(OpCode.Greater),
+            TokenType.EqualEqual => self.emitOpCode(.Equal),
+            TokenType.Greater => self.emitOpCode(.Greater),
             TokenType.GreaterEqual => self.emitOpCodes(OpCode.Less, OpCode.Not),
-            TokenType.Less => self.emitOpCode(OpCode.Less),
+            TokenType.Less => self.emitOpCode(.Less),
             TokenType.LessEqual => self.emitOpCodes(OpCode.Greater, OpCode.Not),
-            TokenType.Plus => self.emitOpCode(OpCode.Add),
-            TokenType.Minus => self.emitOpCode(OpCode.Subtract),
-            TokenType.Star => self.emitOpCode(OpCode.Multiply),
-            TokenType.Slash => self.emitOpCode(OpCode.Divide),
+            TokenType.Plus => self.emitOpCode(.Add),
+            TokenType.Minus => self.emitOpCode(.Subtract),
+            TokenType.Star => self.emitOpCode(.Multiply),
+            TokenType.Slash => self.emitOpCode(.Divide),
             else => unreachable,
         }
     }
@@ -753,9 +875,9 @@ pub const Instance = struct {
 
     fn literal(self: *Instance, canAssign: bool) void {
         switch (self.parser.previous.token_type) {
-            TokenType.False => self.emitOpCode(OpCode.False),
-            TokenType.Nil => self.emitOpCode(OpCode.Nil),
-            TokenType.True => self.emitOpCode(OpCode.True),
+            TokenType.False => self.emitOpCode(.False),
+            TokenType.Nil => self.emitOpCode(.Nil),
+            TokenType.True => self.emitOpCode(.True),
             else => unreachable,
         }
     }
@@ -768,11 +890,11 @@ pub const Instance = struct {
         var getOp: OpCode = undefined;
         var setOp: OpCode = undefined;
         const arg = blk: {
-            if (self.resolveLocal(self.current.?, name)) |l| {
+            if (self.resolveLocal(self.current, name)) |l| {
                 getOp = .GetLocal;
                 setOp = .SetLocal;
                 break :blk l;
-            } else |_| if (self.resolveUpvalue(self.current.?, name)) |u| {
+            } else |_| if (self.resolveUpvalue(self.current, name)) |u| {
                 getOp = .GetUpvalue;
                 setOp = .SetUpvalue;
                 break :blk u;
@@ -825,7 +947,7 @@ pub const Instance = struct {
     }
 
     fn emitLoop(self: *Instance, loopStart: i32) void {
-        self.emitOpCode(OpCode.Loop);
+        self.emitOpCode(.Loop);
         const count = @intCast(i32, self.currentChunk().code.len);
         const offset = @intCast(u16, count - loopStart + 2);
         if (offset > std.math.maxInt(u16)) self.parser.errorAtPrevious("Loop body too large.");
@@ -835,9 +957,18 @@ pub const Instance = struct {
     }
 
     fn emitReturn(self: *Instance) void {
-        self.emitOpCode(.Nil);
-        self.emitOpCode(OpCode.Return);
+        // An initializer automatically returns "this".
+        if (self.current.T == .Initializer) {
+            self.emitOpCode(.GetLocal);
+            self.emitByte(0);
+        } else {
+            self.emitOpCode(.Nil);
+        }
+
+        self.emitOpCode(.Return);
     }
+
+    fn emit(self: *Instance, code: var) void {}
 
     fn emitOpCode(self: *Instance, op: OpCode) void {
         self.emitByte(@enumToInt(op));
@@ -862,6 +993,10 @@ pub const Instance = struct {
     }
 
     fn makeConstant(self: *Instance, value: Value) u8 {
+        // if (constant > UINT8_MAX) {
+        //     error("Too many constants in one chunk.");
+        //     return 0;
+        // }
         return self.currentChunk().addConstant(value);
     }
 };

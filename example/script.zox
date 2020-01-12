@@ -1,11 +1,24 @@
-fn makeClosure(value) {
-  fn closure() {
-    print value;
+class Vec3 {
+  fn str() {
+    print "hello"; 
   }
-  return closure;
 }
 
-var doughnut = makeClosure("doughnut");
-var bagel = makeClosure("bagel");
-doughnut();
-bagel();
+fn fib(n) {
+  if (n < 2) return n;
+  return fib(n - 2) + fib(n - 1);
+}
+
+var k = clock();
+print fib(30);
+var t = clock() - k;
+
+fn go(value) {
+    fn gg() {
+        print value;
+    }
+    return gg;
+}
+
+var p = go("dude");
+p();
