@@ -45,13 +45,13 @@ pub const Chunk = struct {
         vm.push(value);
         self.constants.append(value) catch unreachable;
         _ = vm.pop();
-        return @intCast(u8, self.constants.len - 1);
+        return @intCast(u8, self.constants.items.len - 1);
     }
 
     pub fn write(self: *Chunk, byte: u8, line: usize) !void {
         try self.code.append(byte);
 
-        if (self.lines.len == 0 or self.lines.at(self.lines.len - 1).line != line)
+        if (self.lines.items.len == 0 or self.lines.items[self.lines.items.len - 1].line != line)
             try self.lines.append(Line{ .line = @intCast(u32, line), .offset = byte });
     }
 
@@ -64,15 +64,15 @@ pub const Chunk = struct {
     }
 
     fn instructionAt(chunk: *const Chunk, offset: usize) OpCode {
-        return @intToEnum(OpCode, chunk.code.at(offset));
+        return @intToEnum(OpCode, chunk.code.items[offset]);
     }
 
     fn getLine(chunk: *const Chunk, offset: usize) u32 {
         var start: usize = 0;
-        var end: usize = chunk.lines.len;
+        var end: usize = chunk.lines.items.len;
         while (start < end) {
             const mid = (start + end) / 2;
-            if (chunk.lines.at(mid).offset <= offset) {
+            if (chunk.lines.items[mid].offset <= offset) {
                 start = mid + 1;
             } else {
                 end = mid;
@@ -80,7 +80,7 @@ pub const Chunk = struct {
         }
 
         if (end == 0) return 0;
-        return chunk.lines.at(end - 1).line;
+        return chunk.lines.items[end - 1].line;
     }
 
     fn disassembleInstruction(chunk: *const Chunk, offset: usize) usize {
@@ -102,6 +102,7 @@ pub const Chunk = struct {
             OpCode.DefineGlobal => return constantInstruction("DefineGlobal", chunk, offset),
             OpCode.GetGlobal => return constantInstruction("GetGlobal", chunk, offset),
             OpCode.SetGlobal => return constantInstruction("SetGlobal", chunk, offset),
+            OpCode.GetSuper => return constantInstruction("GetSuper", chunk, offset),
             OpCode.Equal => return simpleInstruction("Equal", offset),
             OpCode.Greater => return simpleInstruction("Greater", offset),
             OpCode.Less => return simpleInstruction("Less", offset),
@@ -119,19 +120,20 @@ pub const Chunk = struct {
             OpCode.SetProperty => return constantInstruction("SetProperty", chunk, offset),
             OpCode.Return => return simpleInstruction("Return", offset),
             OpCode.Call => return byteInstruction("Call", chunk, offset),
-            OpCode.Class => return constantInstruction("Class", chunk, offset),
+            OpCode.Class => return simpleInstruction("Class", offset),
+            OpCode.Inherit => return simpleInstruction("Inherit", offset),
             OpCode.Subclass => return constantInstruction("Subclass", chunk, offset),
             OpCode.Method => return constantInstruction("Method", chunk, offset),
             OpCode.Invoke => return invokeInstruction("Invoke", chunk, offset),
             OpCode.Super => return invokeInstruction("Super", chunk, offset),
             OpCode.Closure => {
-                const constant = chunk.code.at(offset + 1);
-                std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.at(constant).toString() });
-                const function = chunk.constants.at(constant).Obj.data.Function;
+                const constant = chunk.code.items[offset + 1];
+                std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.items[constant].toString() });
+                const function = chunk.constants.items[constant].Obj.data.Function;
                 var i: usize = 0;
                 while (i < function.upvalueCount) : (i += 1) {
-                    const isLocal = chunk.code.at(offset + 2 + i) != 0;
-                    const index = chunk.code.at(offset + 3 + i);
+                    const isLocal = chunk.code.items[offset + 2 + i] != 0;
+                    const index = chunk.code.items[offset + 3 + i];
                     const text = if (isLocal) "Local" else "Upvalue";
                     std.debug.warn("{}:{} | {} {}\n", .{ offset + 2 + 2 * i, line, text, index });
                 }
@@ -146,33 +148,33 @@ pub const Chunk = struct {
     }
 
     pub fn invokeInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
-        const argCount = chunk.code.at(offset + 1);
-        const constant = chunk.code.at(offset + 2);
+        const argCount = chunk.code.items[offset + 1];
+        const constant = chunk.code.items[offset + 2];
         std.debug.warn("{} ({} args) {} '{}'\n", .{
             name,
             argCount,
             constant,
-            chunk.constants.at(constant).toString(),
+            chunk.constants.items[constant].toString(),
         });
         return offset + 2;
     }
 
     fn jumpInstruction(name: []const u8, sign: i32, chunk: *const Chunk, offset: usize) usize {
-        var jump = @intCast(i16, chunk.code.at(offset + 1)) << 8;
-        jump |= @intCast(i16, chunk.code.at(offset + 2));
+        var jump = @intCast(i16, chunk.code.items[offset + 1]) << 8;
+        jump |= @intCast(i16, chunk.code.items[offset + 2]);
         std.debug.warn("{}: {} . {}\n", .{ name, offset, @intCast(i16, offset + 3) + sign * jump });
         return offset + 3;
     }
 
     fn byteInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
-        const slot = chunk.code.at(offset + 1);
+        const slot = chunk.code.items[offset + 1];
         std.debug.warn("{}: {}\n", .{ slot, name });
         return offset + 2;
     }
 
     fn constantInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
-        const constant = chunk.code.at(offset + 1);
-        std.debug.warn("{} {}: {}\n", .{ name, constant, chunk.constants.at(constant).toString() });
+        const constant = chunk.code.items[offset + 1];
+        std.debug.warn("{} {}: {}\n", .{ name, constant, chunk.constants.items[constant].toString() });
         return offset + 2;
     }
 

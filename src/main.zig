@@ -8,7 +8,7 @@ const REPL = @import("./repl.zig").REPL;
 const Compiler = @import("./compiler.zig").Compiler;
 const Value = @import("./value.zig").Value;
 
-pub const allocator = std.debug.global_allocator;
+pub const allocator = std.testing.allocator;
 const example_file = @embedFile("../example/script.zox") ++ [_]u8 {0};
 
 export var vm: VM = undefined;
@@ -23,14 +23,15 @@ pub fn main() !void {
     }
 
     vm = VM.create();
+
+    try vm.initialize();
     defer vm.destroy();
     
-    try vm.stack.ensureCapacity(1024);
     vm.defineNative("clock", lib.clockNative);
 
-    switch(args_list.len) {
+    switch(args_list.items.len) {
         1 => try runRepl(),
-        2 => try runFile(args_list.at(1)),
+        2 => try runFile(args_list.items[1]),
         3 => try vm.interpret(example_file),
         else => showUsage()
     }
@@ -45,15 +46,19 @@ fn unwrapArg(arg: anyerror![]u8) ![]u8 {
 
 fn runRepl() !void {
     var line = [_] u8 {0} ** 256;
+    const stdIn = std.io.getStdIn();
+    const stream = stdIn.inStream();
     while(true) {
-        std.debug.warn("> ", .{});
-        const source = try std.io.readLineSlice(line[0..]);
+        std.debug.warn("> ", .{}); 
+        const source = try stream.readUntilDelimiterAlloc(allocator, '\n', 256);
         const result = vm.interpret(source);
+        allocator.free(source);
     }
 }
 
 fn runFile(path: []const u8) !void {
-    const source = try std.io.readFileAlloc(allocator, path);
+    var dir: std.fs.Dir = undefined;
+    const source = try dir.readFileAlloc(allocator, path, 4096);
     const result = vm.interpret(source);
 }
 

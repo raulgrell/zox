@@ -95,7 +95,7 @@ fn makeRule(_: TokenType, prefix: ?ParseFn, infix: ?ParseFn, precedence: Precede
     };
 }
 
-const num_rules = @memberCount(TokenType);
+const num_rules = @typeInfo(TokenType).Enum.fields.len;
 const rules: [num_rules]ParseRule = blk: {
     var list: [num_rules]ParseRule = undefined;
     list[@enumToInt(TokenType.LeftParen)] = makeRule(.LeftParen, Instance.grouping, Instance.call, Precedence.Call);
@@ -133,8 +133,8 @@ const rules: [num_rules]ParseRule = blk: {
     list[@enumToInt(TokenType.Or)] = makeRule(.Or, null, Instance.orFn, Precedence.Or);
     list[@enumToInt(TokenType.Print)] = makeRule(.Print, null, null, Precedence.None);
     list[@enumToInt(TokenType.Return)] = makeRule(.Return, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Super)] = makeRule(.Super, null, null, Precedence.None);
-    list[@enumToInt(TokenType.This)] = makeRule(.This, null, null, Precedence.None);
+    list[@enumToInt(TokenType.Super)] = makeRule(.Super, Instance.super, null, Precedence.None);
+    list[@enumToInt(TokenType.This)] = makeRule(.This, Instance.this, null, Precedence.None);
     list[@enumToInt(TokenType.True)] = makeRule(.True, Instance.literal, null, Precedence.None);
     list[@enumToInt(TokenType.Var)] = makeRule(.Var, null, null, Precedence.None);
     list[@enumToInt(TokenType.While)] = makeRule(.While, null, null, Precedence.None);
@@ -187,17 +187,17 @@ pub const Compiler = struct {
         }
 
         const hasReceiver = self.T != .Function and self.T != .Static;
-        
+
         var local = &self.locals[@intCast(u32, self.local_count)];
         local.depth = @intCast(i32, self.scope_depth);
         local.isCaptured = false;
-        local.name.lexeme = if (hasReceiver) "this" else "";
+        local.name.lexeme = if (self.T != .Function) "this" else "";
         self.local_count += 1;
     }
 };
 
 const ClassCompiler = struct {
-    enclosing: *ClassCompiler,
+    enclosing: ?*ClassCompiler,
     name: Token,
     hasSuperclass: bool,
 
@@ -224,7 +224,7 @@ pub const Upvalue = struct {
 pub const Instance = struct {
     compiler: Compiler,
     current: *Compiler,
-    currentClass: *ClassCompiler,
+    currentClass: ?*ClassCompiler,
     parser: Parser,
     scanner: Scanner,
     innermostLoopStart: u32,
@@ -386,7 +386,7 @@ pub const Instance = struct {
     }
 
     fn patchJump(self: *Instance, offset: usize) void {
-        const jump = self.currentChunk().code.len - offset - 2;
+        const jump = self.currentChunk().code.items.len - offset - 2;
         if (jump > std.math.maxInt(u16)) {
             self.parser.errorAtPrevious("Too much code to jump over");
         }
@@ -402,7 +402,7 @@ pub const Instance = struct {
 
         const surroundingLoopStart = self.innermostLoopStart;
         const surroundingLoopScopeDepth = self.innermostLoopScopeDepth;
-        self.innermostLoopStart = @intCast(u32, self.currentChunk().code.len);
+        self.innermostLoopStart = @intCast(u32, self.currentChunk().code.items.len);
         self.innermostLoopScopeDepth = self.current.scope_depth;
 
         self.consume(.LeftParen, "Expect '(' after 'while'.");
@@ -507,18 +507,26 @@ pub const Instance = struct {
         classCompiler.enclosing = self.currentClass;
         self.currentClass = &classCompiler;
 
-        // TODO: use colon?
         if (self.match(.Less)) {
             if (verbose_parse) std.debug.warn("S | Superclass\n", .{});
             self.consume(.Identifier, "Expect superclass name");
-            classCompiler.hasSuperclass = true;
+
+            self.variable(false);
+
+            if (identifiersEqual(classCompiler.name, self.parser.previous)) {
+                self.parser.errorAtPrevious("Class cannot inherit from itself.");
+                return error.CompileError;
+            }
 
             self.beginScope();
-            self.variable(false);
             self.addLocal(Token.symbol("super"));
+            self.defineVariable(0);
 
-            self.emitOpCode(.Subclass);
+            self.namedVariable(classCompiler.name, false);
+
+            self.emitOpCode(.Inherit);
             self.emitByte(nameConstant);
+            classCompiler.hasSuperclass = true;
         } else {
             self.emitOpCode(.Class);
             self.emitByte(nameConstant);
@@ -532,7 +540,7 @@ pub const Instance = struct {
 
         self.defineVariable(nameConstant);
 
-        self.currentClass = self.currentClass.enclosing;
+        self.currentClass = self.currentClass.?.enclosing;
     }
 
     fn method(self: *Instance) !void {
@@ -801,6 +809,11 @@ pub const Instance = struct {
             self.expression();
             self.emitOpCode(.SetProperty);
             self.emitByte(name);
+        } else if (self.match(.LeftParen)) {
+            const argCount = self.argumentList();
+            self.emitOpCode(.Invoke);
+            self.emitByte(name);
+            self.emitByte(argCount);
         } else {
             self.emitOpCode(.GetProperty);
             self.emitByte(name);
@@ -886,6 +899,38 @@ pub const Instance = struct {
         self.namedVariable(self.parser.previous, canAssign);
     }
 
+    fn super(self: *Instance, canAssign: bool) void {
+        if (self.currentClass) |current| {
+            if (!current.hasSuperclass) {
+                self.parser.errorAtPrevious("Cannot use 'super' in a class with no superclass.");
+            }
+        } else {
+            self.parser.errorAtPrevious("Cannot use 'super' outside of a class.");
+        }
+
+        self.consume(.Dot, "Expect '.' after 'super'");
+        self.consume(.Identifier, "Expect superclass method name");
+        const name = self.identifierConstant(self.parser.previous);
+
+        self.namedVariable(Token.symbol("this"), false);
+
+        if (self.match(.LeftParen)) {
+            const argCount = self.argumentList();
+            self.namedVariable(Token.symbol("super"), false);
+            self.emitOpCode(.SuperInvoke);
+            self.emitByte(name);
+            self.emitByte(argCount);
+        } else {
+            self.namedVariable(Token.symbol("super"), false);
+            self.emitOpCode(.GetSuper);
+            self.emitByte(name);
+        }
+    }
+
+    fn this(self: *Instance, canAssign: bool) void {
+        self.variable(false);
+    }
+
     fn namedVariable(self: *Instance, name: Token, canAssign: bool) void {
         var getOp: OpCode = undefined;
         var setOp: OpCode = undefined;
@@ -943,12 +988,12 @@ pub const Instance = struct {
         self.emitByte('\xFF');
         self.emitByte('\xFF');
 
-        return self.currentChunk().code.len - 2;
+        return self.currentChunk().code.items.len - 2;
     }
 
     fn emitLoop(self: *Instance, loopStart: i32) void {
         self.emitOpCode(.Loop);
-        const count = @intCast(i32, self.currentChunk().code.len);
+        const count = @intCast(i32, self.currentChunk().code.items.len);
         const offset = @intCast(u16, count - loopStart + 2);
         if (offset > std.math.maxInt(u16)) self.parser.errorAtPrevious("Loop body too large.");
 

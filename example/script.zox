@@ -22,3 +22,27 @@ fn go(value) {
 
 var p = go("dude");
 p();
+
+class Doughnut {
+  fn cook() {
+    print "Dunk in the fryer.";
+    this.finish("sprinkles");
+  }
+
+  fn finish(ingredient) {
+    print "Finish with " + ingredient;
+  }
+}
+
+class Cruller < Doughnut {
+  fn finish(ingredient) {
+    super.finish("icing");
+  }
+}
+
+var dd = Doughnut();
+dd.cook();
+
+var kk = Cruller();
+kk.cook();
+

@@ -5,6 +5,7 @@ const VM = @import("vm.zig").VM;
 const Value = @import("value.zig").Value;
 const ValueType = @import("value.zig").ValueType;
 const Chunk = @import("chunk.zig").Chunk;
+const Compiler = @import("compiler.zig").Compiler;
 
 const growth_factor_gc = 2;
 const verbose_gc = false;
@@ -21,6 +22,7 @@ pub const ObjType = enum {
     Class,
     Closure,
     Function,
+    BoundMethod,
     Native,
     String,
     Upvalue,
@@ -121,6 +123,7 @@ pub const ObjClosure = struct {
 pub const ObjClass = struct {
     name: *ObjString,
     super: ?*ObjClass,
+    methods: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
 
     pub fn allocate(name: *ObjString, super: ?*ObjClass) *Obj {
         const closure = Obj.allocate();
@@ -128,6 +131,7 @@ pub const ObjClass = struct {
             .Class = ObjClass{
                 .name = name,
                 .super = super,
+                .methods = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
             },
         };
         return closure;
@@ -213,6 +217,7 @@ pub const Obj = struct {
         Function: ObjFunction,
         Closure: ObjClosure,
         Native: ObjNative,
+        BoundMethod: ObjBoundMethod,
     };
 
     pub fn value(self: *Obj) Value {
@@ -222,6 +227,7 @@ pub const Obj = struct {
     pub fn toString(self: Obj) []const u8 {
         switch (self.data) {
             .Instance => |i| return i.class.name.bytes,
+            .BoundMethod => |m| return m.method.function.name.?.data.String.bytes,
             .Class => |c| return c.name.bytes,
             .Upvalue => |u| return "Upvalue",
             .Closure => |c| return "Closure",
@@ -233,7 +239,7 @@ pub const Obj = struct {
 
     fn equal(self: *const Obj, other: *const Obj) bool {
         switch (self.data) {
-            .Upvalue, .Closure, .Function, .Native, .String, .Instance, .Class => return self == other,
+            .BoundMethod, .Upvalue, .Closure, .Function, .Native, .String, .Instance, .Class => return self == other,
         }
     }
 
@@ -263,6 +269,7 @@ pub const Obj = struct {
                 i.fields.deinit();
                 allocator.destroy(self);
             },
+            .BoundMethod => |m| allocator.destroy(self),
             .Class => |c| allocator.destroy(self),
             .Upvalue => |u| allocator.destroy(self),
             .Function => |f| {
@@ -343,7 +350,7 @@ pub fn collectGarbage() void {
 }
 
 pub fn markRoots() void {
-    for (vm.stack.toSlice()) |*v| markValue(v);
+    for (vm.stack.items) |*v| markValue(v);
 
     var i: usize = 0;
     while (i < vm.frame_count) : (i += 1) {
@@ -356,6 +363,8 @@ pub fn markRoots() void {
     }
 
     markTable();
+    markCompilerRoots();
+    // markObject(vm.initString.?);
 }
 
 pub fn markValue(value: *Value) void {
@@ -393,11 +402,11 @@ pub fn markTable() void {
 }
 
 pub fn markCompilerRoots() void {
-    var compiler: ?*Compiler = current;
-    while (compiler) |c| {
-        markObject(c.function);
-        compiler = c.enclosing;
-    }
+    var compiler: ?*Compiler = vm.instance.current;
+    // while (compiler) |c| {
+    //     markObject(c.function);
+    //     compiler = c.enclosing;
+    // }
 }
 
 pub fn traceReferences() void {
@@ -418,6 +427,7 @@ pub fn blackenObject(object: *Obj) void {
             //markObject(i.class);
             //markTable(&instance.fields);
         },
+        .BoundMethod => |m| {},
         .Class => |c| {},
         .Closure => |c| {
             markObject(object);
@@ -428,7 +438,7 @@ pub fn blackenObject(object: *Obj) void {
         },
         .Function => |f| {
             if (f.name) |n| markObject(n);
-            for (f.chunk.constants.toSlice()) |*c| markValue(c);
+            for (f.chunk.constants.items) |*c| markValue(c);
         },
         .Native, .String => {},
     }
