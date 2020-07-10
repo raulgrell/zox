@@ -2,8 +2,8 @@ const std = @import("std");
 const allocator = @import("root").allocator;
 
 const Chunk = @import("./chunk.zig").Chunk;
+const OpCode = @import("./chunk.zig").OpCode;
 const VM = @import("./vm.zig").VM;
-const OpCode = @import("./vm.zig").OpCode;
 const Token = @import("./scanner.zig").Token;
 const TokenType = @import("./scanner.zig").TokenType;
 const Scanner = @import("./scanner.zig").Scanner;
@@ -16,19 +16,10 @@ const verbose = false;
 const verbose_parse = false;
 
 pub const Parser = struct {
-    current: Token,
-    previous: Token,
-    had_error: bool,
-    had_panic: bool,
-
-    pub fn create() Parser {
-        return Parser{
-            .current = undefined,
-            .previous = undefined,
-            .had_error = false,
-            .had_panic = false,
-        };
-    }
+    current: Token = undefined,
+    previous: Token = undefined,
+    had_error: bool = false,
+    had_panic: bool = false,
 
     fn errorAtCurrent(self: *Parser, message: []const u8) void {
         self.errorAt(&self.current, message);
@@ -87,62 +78,64 @@ pub const Precedence = packed enum(u8) {
     }
 };
 
-fn makeRule(_: TokenType, prefix: ?ParseFn, infix: ?ParseFn, precedence: Precedence) ParseRule {
-    return ParseRule{
+fn makeRule(comptime prefix: ?ParseFn, comptime infix: ?ParseFn, comptime precedence: Precedence) ParseRule {
+    return comptime ParseRule{
         .prefix = prefix,
         .infix = infix,
         .precedence = precedence,
     };
 }
 
-const num_rules = @typeInfo(TokenType).Enum.fields.len;
-const rules: [num_rules]ParseRule = blk: {
-    var list: [num_rules]ParseRule = undefined;
-    list[@enumToInt(TokenType.LeftParen)] = makeRule(.LeftParen, Instance.grouping, Instance.call, Precedence.Call);
-    list[@enumToInt(TokenType.RightParen)] = makeRule(.RightParen, null, null, Precedence.None);
-    list[@enumToInt(TokenType.LeftBrace)] = makeRule(.LeftBrace, null, null, Precedence.None);
-    list[@enumToInt(TokenType.RightBrace)] = makeRule(.RightBrace, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Comma)] = makeRule(.Comma, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Dot)] = makeRule(.Dot, null, Instance.dot, Precedence.Call);
-    list[@enumToInt(TokenType.Minus)] = makeRule(.Minus, Instance.unary, Instance.binary, Precedence.Term);
-    list[@enumToInt(TokenType.Plus)] = makeRule(.Plus, null, Instance.binary, Precedence.Term);
-    list[@enumToInt(TokenType.Colon)] = makeRule(.Colon, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Semicolon)] = makeRule(.Semicolon, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Slash)] = makeRule(.Slash, null, Instance.binary, Precedence.Factor);
-    list[@enumToInt(TokenType.Star)] = makeRule(.Star, null, Instance.binary, Precedence.Factor);
-    list[@enumToInt(TokenType.Bang)] = makeRule(.Bang, Instance.unary, null, Precedence.None);
-    list[@enumToInt(TokenType.BangEqual)] = makeRule(.BangEqual, null, Instance.binary, Precedence.Equality);
-    list[@enumToInt(TokenType.Equal)] = makeRule(.Equal, null, null, Precedence.None);
-    list[@enumToInt(TokenType.EqualEqual)] = makeRule(.EqualEqual, null, Instance.binary, Precedence.Equality);
-    list[@enumToInt(TokenType.Greater)] = makeRule(.Greater, null, Instance.binary, Precedence.Comparison);
-    list[@enumToInt(TokenType.GreaterEqual)] = makeRule(.GreaterEqual, null, Instance.binary, Precedence.Comparison);
-    list[@enumToInt(TokenType.Less)] = makeRule(.Less, null, Instance.binary, Precedence.Comparison);
-    list[@enumToInt(TokenType.LessEqual)] = makeRule(.LessEqual, null, Instance.binary, Precedence.Comparison);
-    list[@enumToInt(TokenType.Identifier)] = makeRule(.Identifier, Instance.variable, null, Precedence.None);
-    list[@enumToInt(TokenType.String)] = makeRule(.String, Instance.string, null, Precedence.None);
-    list[@enumToInt(TokenType.Number)] = makeRule(.Number, Instance.number, null, Precedence.None);
-    list[@enumToInt(TokenType.And)] = makeRule(.And, null, Instance.andFn, Precedence.And);
-    list[@enumToInt(TokenType.Class)] = makeRule(.Class, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Const)] = makeRule(.Const, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Else)] = makeRule(.Else, null, null, Precedence.None);
-    list[@enumToInt(TokenType.False)] = makeRule(.False, Instance.literal, null, Precedence.None);
-    list[@enumToInt(TokenType.Fn)] = makeRule(.Fn, null, null, Precedence.None);
-    list[@enumToInt(TokenType.For)] = makeRule(.For, null, null, Precedence.None);
-    list[@enumToInt(TokenType.If)] = makeRule(.If, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Nil)] = makeRule(.Nil, Instance.literal, null, Precedence.None);
-    list[@enumToInt(TokenType.Or)] = makeRule(.Or, null, Instance.orFn, Precedence.Or);
-    list[@enumToInt(TokenType.Print)] = makeRule(.Print, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Return)] = makeRule(.Return, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Super)] = makeRule(.Super, Instance.super, null, Precedence.None);
-    list[@enumToInt(TokenType.This)] = makeRule(.This, Instance.this, null, Precedence.None);
-    list[@enumToInt(TokenType.True)] = makeRule(.True, Instance.literal, null, Precedence.None);
-    list[@enumToInt(TokenType.Var)] = makeRule(.Var, null, null, Precedence.None);
-    list[@enumToInt(TokenType.While)] = makeRule(.While, null, null, Precedence.None);
-    list[@enumToInt(TokenType.Error)] = makeRule(.Error, null, null, Precedence.None);
-    list[@enumToInt(TokenType.EOF)] = makeRule(.EOF, null, null, Precedence.None);
-
-    break :blk list;
-};
+fn getRule(token: TokenType) ParseRule {
+    return switch (token) {
+        .LeftParen => makeRule(Instance.grouping, Instance.call, .Call),
+        .RightParen => makeRule(null, null, .None),
+        .LeftBrace => makeRule(null, null, .None),
+        .RightBrace => makeRule(null, null, .None),
+        .Comma => makeRule(null, null, .None),
+        .Dot => makeRule(null, Instance.dot, .Call),
+        .Minus => makeRule(Instance.unary, Instance.binary, .Term),
+        .Plus => makeRule(null, Instance.binary, .Term),
+        .Colon => makeRule(null, null, .None),
+        .Semicolon => makeRule(null, null, .None),
+        .Slash => makeRule(null, Instance.binary, .Factor),
+        .Star => makeRule(null, Instance.binary, .Factor),
+        .Bang => makeRule(Instance.unary, null, .None),
+        .BangEqual => makeRule(null, Instance.binary, .Equality),
+        .Equal => makeRule(null, null, .None),
+        .EqualEqual => makeRule(null, Instance.binary, .Equality),
+        .Greater => makeRule(null, Instance.binary, .Comparison),
+        .GreaterEqual => makeRule(null, Instance.binary, .Comparison),
+        .Less => makeRule(null, Instance.binary, .Comparison),
+        .LessEqual => makeRule(null, Instance.binary, .Comparison),
+        .Identifier => makeRule(Instance.variable, null, .None),
+        .String => makeRule(Instance.string, null, .None),
+        .Number => makeRule(Instance.number, null, .None),
+        .And => makeRule(null, Instance.andFn, .And),
+        .Break => makeRule(null, null, .None),
+        .Continue => makeRule(null, null, .None),
+        .Class => makeRule(null, null, .None),
+        .Const => makeRule(null, null, .None),
+        .Else => makeRule(null, null, .None),
+        .False => makeRule(Instance.literal, null, .None),
+        .Fn => makeRule(null, null, .None),
+        .For => makeRule(null, null, .None),
+        .If => makeRule(null, null, .None),
+        .Nil => makeRule(Instance.literal, null, .None),
+        .Or => makeRule(null, Instance.orFn, .Or),
+        .Print => makeRule(null, null, .None),
+        .Return => makeRule(null, null, .None),
+        .Static => makeRule(null, null, .None),
+        .Super => makeRule(Instance.super, null, .None),
+        .This => makeRule(Instance.this, null, .None),
+        .True => makeRule(Instance.literal, null, .None),
+        .Var => makeRule(null, null, .None),
+        .With => makeRule(null, null, .None),
+        .While => makeRule(null, null, .None),
+        .Error => makeRule(null, null, .None),
+        .EOF => makeRule(null, null, .None),
+    };
+}
 
 const FunctionType = enum {
     Function,
@@ -197,17 +190,9 @@ pub const Compiler = struct {
 };
 
 const ClassCompiler = struct {
-    enclosing: ?*ClassCompiler,
-    name: Token,
-    hasSuperclass: bool,
-
-    pub fn create() ClassCompiler {
-        return ClassCompiler{
-            .enclosing = undefined,
-            .name = undefined,
-            .hasSuperclass = undefined,
-        };
-    }
+    enclosing: ?*ClassCompiler = undefined,
+    name: Token = undefined,
+    hasSuperclass: bool = false,
 };
 
 pub const Local = struct {
@@ -222,35 +207,32 @@ pub const Upvalue = struct {
 };
 
 pub const Instance = struct {
-    compiler: Compiler,
     current: *Compiler,
     currentClass: ?*ClassCompiler,
-    parser: Parser,
+    parser: *Parser,
     scanner: Scanner,
     innermostLoopStart: u32,
     innermostLoopScopeDepth: u32,
 
     pub fn create() Instance {
-        return Instance{
-            .compiler = Compiler.create(null, 0, .Script),
+        return Instance {
             .current = undefined,
             .currentClass = undefined,
-            .parser = Parser.create(),
-            .scanner = Scanner.create(),
+            .parser = undefined,
+            .scanner = Scanner{},
             .innermostLoopStart = 0,
             .innermostLoopScopeDepth = 0,
         };
     }
 
-    pub fn init(self: *Instance) void {
-        self.current = &self.compiler;
-    }
-
     pub fn compile(self: *Instance, source: []const u8) !*Obj {
         self.scanner.init(source);
 
-        self.compiler.init(self);
-
+        var compiler = Compiler.create(null, 0, .Script);
+        var parser = Parser{};
+        
+        self.current = &compiler;
+        self.parser = &parser;
         self.parser.had_error = false;
         self.parser.had_panic = false;
         self.advance();
@@ -291,7 +273,7 @@ pub const Instance = struct {
             self.currentChunk().disassemble("Chunk");
 
         const func = self.current.function;
-        self.current = if (self.current.enclosing) |e| e else &self.compiler;
+        self.current = self.current.enclosing orelse undefined;
 
         return func;
     }
@@ -344,7 +326,7 @@ pub const Instance = struct {
         if (verbose_parse) std.debug.warn("S | Print\n", .{});
         self.expression();
         self.consume(TokenType.Semicolon, "Expect ';' after value.");
-        self.emitOpCode(.Print);
+        self.emitOp(.Print);
     }
 
     fn ifStatement(self: *Instance) anyerror!void {
@@ -354,13 +336,13 @@ pub const Instance = struct {
         self.consume(.RightParen, "Expect ')' after condition");
 
         const thenJump = self.emitJump(OpCode.JumpIfFalse);
-        self.emitOpCode(.Pop);
+        self.emitOp(.Pop);
         try self.statement();
 
         const elseJump = self.emitJump(.Jump);
 
         self.patchJump(thenJump);
-        self.emitOpCode(.Pop);
+        self.emitOp(.Pop);
 
         if (self.match(.Else)) try self.statement();
         self.patchJump(elseJump);
@@ -381,7 +363,7 @@ pub const Instance = struct {
             }
             self.expression();
             self.consume(.Semicolon, "Expect ';' after return value.");
-            self.emitOpCode(.Return);
+            self.emitOp(.Return);
         }
     }
 
@@ -411,13 +393,13 @@ pub const Instance = struct {
 
         const exitJump = self.emitJump(.JumpIfFalse);
 
-        self.emitOpCode(.Pop);
+        self.emitOp(.Pop);
         try self.statement();
 
         self.emitLoop(@intCast(i32, self.innermostLoopStart));
 
         self.patchJump(exitJump);
-        self.emitOpCode(.Pop);
+        self.emitOp(.Pop);
 
         self.innermostLoopStart = surroundingLoopStart;
         self.innermostLoopScopeDepth = surroundingLoopScopeDepth;
@@ -438,9 +420,9 @@ pub const Instance = struct {
         var next_index = @intCast(u8, self.current.local_count - 1);
         while (self.current.local_count > 0 and self.current.locals[next_index].depth > self.current.scope_depth) {
             if (self.current.locals[self.current.local_count - 1].isCaptured) {
-                self.emitOpCode(.CloseUpvalue);
+                self.emitOp(.CloseUpvalue);
             } else {
-                self.emitOpCode(.Pop);
+                self.emitOp(.Pop);
             }
             self.current.local_count -= 1;
             next_index = @intCast(u8, self.current.local_count);
@@ -458,7 +440,7 @@ pub const Instance = struct {
     fn expressionStatement(self: *Instance) void {
         if (verbose_parse) std.debug.warn("S | Expression\n", .{});
         self.expression();
-        self.emitOpCode(.Pop);
+        self.emitOp(.Pop);
         self.consume(TokenType.Semicolon, "Expect ';' after expression.");
     }
 
@@ -498,14 +480,21 @@ pub const Instance = struct {
     fn classDeclaration(self: *Instance) !void {
         if (verbose_parse) std.debug.warn("S | Class\n", .{});
         self.consume(.Identifier, "Expect class name.");
+
         const nameConstant = self.identifierConstant(self.parser.previous);
         self.declareVariable();
 
-        var classCompiler = ClassCompiler.create();
-        classCompiler.name = self.parser.previous;
-        classCompiler.hasSuperclass = false;
-        classCompiler.enclosing = self.currentClass;
+        self.emitUnaryOp(.Class, nameConstant);
+        self.defineVariable(nameConstant);
+
+        var classCompiler = ClassCompiler{
+            .name = self.parser.previous,
+            .hasSuperclass = false,
+            .enclosing = self.currentClass,
+        };
+
         self.currentClass = &classCompiler;
+        defer self.currentClass = self.currentClass.?.enclosing;
 
         if (self.match(.Less)) {
             if (verbose_parse) std.debug.warn("S | Superclass\n", .{});
@@ -523,24 +512,19 @@ pub const Instance = struct {
             self.defineVariable(0);
 
             self.namedVariable(classCompiler.name, false);
-
-            self.emitOpCode(.Inherit);
-            self.emitByte(nameConstant);
+            self.emitOp(.Inherit);
             classCompiler.hasSuperclass = true;
-        } else {
-            self.emitOpCode(.Class);
-            self.emitByte(nameConstant);
         }
+
+        self.namedVariable(self.parser.previous, false);
 
         self.consume(.LeftBrace, "Expect '{' before class body.");
         while (!self.check(.RightBrace) and !self.check(.EOF)) try self.method();
         self.consume(.RightBrace, "Expect '}' after class body.");
+        
+        self.emitOp(.Pop);
 
         if (classCompiler.hasSuperclass) self.endScope();
-
-        self.defineVariable(nameConstant);
-
-        self.currentClass = self.currentClass.?.enclosing;
     }
 
     fn method(self: *Instance) !void {
@@ -564,8 +548,7 @@ pub const Instance = struct {
 
         try self.function(T);
 
-        self.emitOpCode(.Method);
-        self.emitByte(constant);
+        self.emitUnaryOp(.Method, constant);
     }
 
     fn fnDeclaration(self: *Instance) !void {
@@ -606,7 +589,7 @@ pub const Instance = struct {
         self.endScope();
         var func = try self.end(); // TODO: Handle static
 
-        self.emitOpCode(.Closure);
+        self.emitOp(.Closure);
         self.emitByte(self.makeConstant(func.value()));
 
         var i: usize = 0;
@@ -633,7 +616,7 @@ pub const Instance = struct {
         if (self.match(TokenType.Equal)) {
             self.expression();
         } else {
-            self.emitOpCode(.Nil);
+            self.emitOp(.Nil);
         }
         self.consume(TokenType.Semicolon, "Expect ';' after variable declaration.");
         self.defineVariable(global);
@@ -688,7 +671,7 @@ pub const Instance = struct {
             self.markInitialized();
             return;
         }
-        self.emitBytes(@enumToInt(OpCode.DefineGlobal), global);
+        self.emitUnaryOp(.DefineGlobal, global);
     }
 
     fn addLocal(self: *Instance, name: Token) void {
@@ -798,7 +781,7 @@ pub const Instance = struct {
 
     fn call(self: *Instance, canAssign: bool) void {
         const arg_count = self.argumentList();
-        self.emitOpCode(.Call);
+        self.emitOp(.Call);
         self.emitByte(arg_count);
     }
 
@@ -807,15 +790,15 @@ pub const Instance = struct {
         const name = self.identifierConstant(self.parser.previous);
         if (canAssign and self.match(.Equal)) {
             self.expression();
-            self.emitOpCode(.SetProperty);
+            self.emitOp(.SetProperty);
             self.emitByte(name);
         } else if (self.match(.LeftParen)) {
             const argCount = self.argumentList();
-            self.emitOpCode(.Invoke);
+            self.emitOp(.Invoke);
             self.emitByte(name);
             self.emitByte(argCount);
         } else {
-            self.emitOpCode(.GetProperty);
+            self.emitOp(.GetProperty);
             self.emitByte(name);
         }
     }
@@ -851,8 +834,8 @@ pub const Instance = struct {
 
         // Emit the operator instruction.
         switch (operator_type) {
-            TokenType.Bang => self.emitOpCode(.Not),
-            TokenType.Minus => self.emitOpCode(.Negate),
+            TokenType.Bang => self.emitOp(.Not),
+            TokenType.Minus => self.emitOp(.Negate),
             else => unreachable,
         }
     }
@@ -867,30 +850,34 @@ pub const Instance = struct {
 
         // Emit the operator instruction.
         switch (operator_type) {
-            TokenType.BangEqual => self.emitOpCodes(OpCode.Equal, OpCode.Not),
-            TokenType.EqualEqual => self.emitOpCode(.Equal),
-            TokenType.Greater => self.emitOpCode(.Greater),
-            TokenType.GreaterEqual => self.emitOpCodes(OpCode.Less, OpCode.Not),
-            TokenType.Less => self.emitOpCode(.Less),
-            TokenType.LessEqual => self.emitOpCodes(OpCode.Greater, OpCode.Not),
-            TokenType.Plus => self.emitOpCode(.Add),
-            TokenType.Minus => self.emitOpCode(.Subtract),
-            TokenType.Star => self.emitOpCode(.Multiply),
-            TokenType.Slash => self.emitOpCode(.Divide),
+            TokenType.BangEqual => {
+                self.emitOp(OpCode.Equal);
+                self.emitOp(OpCode.Not);
+            },
+            TokenType.EqualEqual => self.emitOp(.Equal),
+            TokenType.Greater => self.emitOp(.Greater),
+            TokenType.GreaterEqual => {
+                self.emitOp(OpCode.Less);
+                self.emitOp(OpCode.Not);
+            },
+            TokenType.Less => self.emitOp(.Less),
+            TokenType.LessEqual => {
+                self.emitOp(OpCode.Greater);
+                self.emitOp(OpCode.Not);
+            },
+            TokenType.Plus => self.emitOp(.Add),
+            TokenType.Minus => self.emitOp(.Subtract),
+            TokenType.Star => self.emitOp(.Multiply),
+            TokenType.Slash => self.emitOp(.Divide),
             else => unreachable,
         }
     }
 
-    fn getRule(token_type: TokenType) *const ParseRule {
-        const rule = &rules[@enumToInt(token_type)];
-        return rule;
-    }
-
     fn literal(self: *Instance, canAssign: bool) void {
         switch (self.parser.previous.token_type) {
-            TokenType.False => self.emitOpCode(.False),
-            TokenType.Nil => self.emitOpCode(.Nil),
-            TokenType.True => self.emitOpCode(.True),
+            TokenType.False => self.emitOp(.False),
+            TokenType.Nil => self.emitOp(.Nil),
+            TokenType.True => self.emitOp(.True),
             else => unreachable,
         }
     }
@@ -917,12 +904,12 @@ pub const Instance = struct {
         if (self.match(.LeftParen)) {
             const argCount = self.argumentList();
             self.namedVariable(Token.symbol("super"), false);
-            self.emitOpCode(.SuperInvoke);
+            self.emitOp(.SuperInvoke);
             self.emitByte(name);
             self.emitByte(argCount);
         } else {
             self.namedVariable(Token.symbol("super"), false);
-            self.emitOpCode(.GetSuper);
+            self.emitOp(.GetSuper);
             self.emitByte(name);
         }
     }
@@ -934,27 +921,27 @@ pub const Instance = struct {
     fn namedVariable(self: *Instance, name: Token, canAssign: bool) void {
         var getOp: OpCode = undefined;
         var setOp: OpCode = undefined;
-        const arg = blk: {
-            if (self.resolveLocal(self.current, name)) |l| {
-                getOp = .GetLocal;
-                setOp = .SetLocal;
-                break :blk l;
-            } else |_| if (self.resolveUpvalue(self.current, name)) |u| {
-                getOp = .GetUpvalue;
-                setOp = .SetUpvalue;
-                break :blk u;
-            } else |_| {
-                getOp = .GetGlobal;
-                setOp = .SetGlobal;
-                break :blk self.identifierConstant(name);
-            }
-        };
+        var arg: u8 = undefined;
 
-        if (canAssign and self.match(TokenType.Equal)) {
+        if (self.resolveLocal(self.current, name)) |v| {
+            getOp = .GetLocal;
+            setOp = .SetLocal;
+            arg = v;
+        } else |_| if (self.resolveUpvalue(self.current, name)) |v| {
+            getOp = .GetUpvalue;
+            setOp = .SetUpvalue;
+            arg = v;
+        } else |_| {
+            getOp = .GetGlobal;
+            setOp = .SetGlobal;
+            arg = self.identifierConstant(name);
+        }
+
+        if (canAssign and self.match(.Equal)) {
             self.expression();
-            self.emitBytes(@enumToInt(setOp), arg);
+            self.emitUnaryOp(setOp, arg);
         } else {
-            self.emitBytes(@enumToInt(getOp), arg);
+            self.emitUnaryOp(getOp, arg);
         }
     }
 
@@ -968,7 +955,7 @@ pub const Instance = struct {
         const endJump = self.emitJump(.Jump);
 
         self.patchJump(elseJump);
-        self.emitOpCode(.Pop);
+        self.emitOp(.Pop);
 
         self.parsePrecedence(.Or);
         self.patchJump(endJump);
@@ -977,14 +964,14 @@ pub const Instance = struct {
     fn andFn(self: *Instance, canAssign: bool) void {
         const endJump = self.emitJump(.JumpIfFalse);
 
-        self.emitOpCode(.Pop);
+        self.emitOp(.Pop);
         self.parsePrecedence(.And);
 
         self.patchJump(endJump);
     }
 
     fn emitJump(self: *Instance, op: OpCode) usize {
-        self.emitOpCode(op);
+        self.emitOp(op);
         self.emitByte('\xFF');
         self.emitByte('\xFF');
 
@@ -992,7 +979,7 @@ pub const Instance = struct {
     }
 
     fn emitLoop(self: *Instance, loopStart: i32) void {
-        self.emitOpCode(.Loop);
+        self.emitOp(.Loop);
         const count = @intCast(i32, self.currentChunk().code.items.len);
         const offset = @intCast(u16, count - loopStart + 2);
         if (offset > std.math.maxInt(u16)) self.parser.errorAtPrevious("Loop body too large.");
@@ -1004,44 +991,34 @@ pub const Instance = struct {
     fn emitReturn(self: *Instance) void {
         // An initializer automatically returns "this".
         if (self.current.T == .Initializer) {
-            self.emitOpCode(.GetLocal);
+            self.emitOp(.GetLocal);
             self.emitByte(0);
         } else {
-            self.emitOpCode(.Nil);
+            self.emitOp(.Nil);
         }
 
-        self.emitOpCode(.Return);
-    }
-
-    fn emit(self: *Instance, code: var) void {}
-
-    fn emitOpCode(self: *Instance, op: OpCode) void {
-        self.emitByte(@enumToInt(op));
-    }
-
-    fn emitOpCodes(self: *Instance, op1: OpCode, op2: OpCode) void {
-        self.emitByte(@enumToInt(op1));
-        self.emitByte(@enumToInt(op2));
+        self.emitOp(.Return);
     }
 
     fn emitByte(self: *Instance, byte: u8) void {
         self.currentChunk().write(byte, self.parser.previous.line) catch unreachable;
     }
 
-    fn emitBytes(self: *Instance, byte1: u8, byte2: u8) void {
-        self.emitByte(byte1);
-        self.emitByte(byte2);
+    fn emitOp(self: *Instance, op: OpCode) void {
+        self.emitByte(@enumToInt(op));
+    }
+
+    fn emitUnaryOp(self: *Instance, op: OpCode, byte: u8) void {
+        self.emitOp(op);
+        self.emitByte(byte);
     }
 
     fn emitConstant(self: *Instance, value: Value) void {
-        self.emitBytes(@enumToInt(OpCode.Constant), self.makeConstant(value));
+        self.emitUnaryOp(.Constant, self.makeConstant(value));
     }
 
     fn makeConstant(self: *Instance, value: Value) u8 {
-        // if (constant > UINT8_MAX) {
-        //     error("Too many constants in one chunk.");
-        //     return 0;
-        // }
+        //TODO: Constant limit
         return self.currentChunk().addConstant(value);
     }
 };

@@ -2,6 +2,7 @@
 .dev/
 .vscode/
 *.code-workspace
+zls/
 
 # Zig artifacts
 build/

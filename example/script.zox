@@ -1,16 +1,18 @@
-class Vec3 {
-  fn str() {
+class Vec3 { 
+  fn str() { 
     print "hello"; 
   }
-}
+} 
+
+var vv = Vec3(); vv.str();
 
 fn fib(n) {
-  if (n < 2) return n;
-  return fib(n - 2) + fib(n - 1);
-}
+  if (n < 2) return n; 
+  return fib(n - 2) + fib(n - 1); 
+} 
 
-var k = clock();
-print fib(30);
+var k = clock(); 
+print fib(30); 
 var t = clock() - k;
 
 fn go(value) {
@@ -23,26 +25,26 @@ fn go(value) {
 var p = go("dude");
 p();
 
-class Doughnut {
+class F {
   fn cook() {
-    print "Dunk in the fryer.";
+    print "Dunk";
     this.finish("sprinkles");
   }
 
   fn finish(ingredient) {
-    print "Finish with " + ingredient;
+    print "Add " + ingredient;
   }
 }
 
-class Cruller < Doughnut {
+class D < F {
   fn finish(ingredient) {
     super.finish("icing");
   }
 }
 
-var dd = Doughnut();
-dd.cook();
+var ff = F();
+ff.cook();
 
-var kk = Cruller();
-kk.cook();
+var dd = D();
+dd.cook();
 

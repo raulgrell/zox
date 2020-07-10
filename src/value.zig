@@ -17,7 +17,7 @@ pub const Value = union(ValueType) {
     Obj: *Obj,
     Nil,
 
-    fn toString(value: Value) []const u8 {
+    pub fn toString(value: Value) []const u8 {
       switch (value) {
         .Bool => |b| return std.fmt.bufPrint(buffer[0..], "{}", .{b}) catch unreachable,
         .Number => |n|  return std.fmt.bufPrint(buffer[0..], "{}", .{n}) catch unreachable,
@@ -26,7 +26,7 @@ pub const Value = union(ValueType) {
       }
     }
 
-    fn equals(a: Value, b: Value) bool {
+    pub fn equals(a: Value, b: Value) bool {
       if (@as(ValueType, a) != @as(ValueType, b)) return false;
       switch (a) {
         .Bool => return a.Bool == b.Bool,
@@ -36,7 +36,7 @@ pub const Value = union(ValueType) {
       }
     }
 
-    fn isTruthy(value: Value) bool {
+    pub fn isTruthy(value: Value) bool {
       switch (value) {
         .Bool => |b| return b,
         .Number => |n| return true,

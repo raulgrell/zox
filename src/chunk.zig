@@ -3,9 +3,55 @@ const allocator = @import("root").allocator;
 
 const Value = @import("./value.zig").Value;
 const VM = @import("./vm.zig").VM;
-const OpCode = @import("./vm.zig").OpCode;
 
 extern var vm: VM;
+
+pub const OpCode = enum(u8) {
+    Constant,
+    Nil,
+    True,
+    False,
+    Equal,
+    NotEqual,
+    Greater,
+    Less,
+    GreaterEqual,
+    LessEqual,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
+    Not,
+    And,
+    Or,
+    Print,
+    Pop,
+    GetLocal,
+    SetLocal,
+    GetUpvalue,
+    SetUpvalue,
+    CloseUpvalue,
+    GetProperty,
+    SetProperty,
+    GetSuper,
+    DefineGlobal,
+    GetGlobal,
+    SetGlobal,
+    JumpIfFalse,
+    Jump,
+    Call,
+    Closure,
+    Invoke,
+    SuperInvoke,
+    Method,
+    Class,
+    Inherit,
+    Super,
+    // Subclass,
+    Loop,
+    Return,
+};
 
 const Line = struct {
     line: u32,
@@ -67,7 +113,7 @@ pub const Chunk = struct {
         return @intToEnum(OpCode, chunk.code.items[offset]);
     }
 
-    fn getLine(chunk: *const Chunk, offset: usize) u32 {
+    pub fn getLine(chunk: *const Chunk, offset: usize) u32 {
         var start: usize = 0;
         var end: usize = chunk.lines.items.len;
         while (start < end) {
@@ -83,50 +129,50 @@ pub const Chunk = struct {
         return chunk.lines.items[end - 1].line;
     }
 
-    fn disassembleInstruction(chunk: *const Chunk, offset: usize) usize {
+    pub fn disassembleInstruction(chunk: *const Chunk, offset: usize) usize {
         const line = chunk.getLine(offset);
         std.debug.warn("{}:{} | ", .{ offset, line });
 
         const instruction = chunk.instructionAt(offset);
         switch (instruction) {
-            OpCode.Constant => return constantInstruction("Constant", chunk, offset),
-            OpCode.Nil => return simpleInstruction("Nil", offset),
-            OpCode.True => return simpleInstruction("True", offset),
-            OpCode.False => return simpleInstruction("False", offset),
-            OpCode.Pop => return simpleInstruction("Pop", offset),
-            OpCode.GetLocal => return byteInstruction("GetLocal", chunk, offset),
-            OpCode.SetLocal => return byteInstruction("SetLocal", chunk, offset),
-            OpCode.GetUpvalue => return byteInstruction("GetUpvalue", chunk, offset),
-            OpCode.SetUpvalue => return byteInstruction("SetUpvalue", chunk, offset),
-            OpCode.CloseUpvalue => return simpleInstruction("CloseUpvalue", offset),
-            OpCode.DefineGlobal => return constantInstruction("DefineGlobal", chunk, offset),
-            OpCode.GetGlobal => return constantInstruction("GetGlobal", chunk, offset),
-            OpCode.SetGlobal => return constantInstruction("SetGlobal", chunk, offset),
-            OpCode.GetSuper => return constantInstruction("GetSuper", chunk, offset),
-            OpCode.Equal => return simpleInstruction("Equal", offset),
-            OpCode.Greater => return simpleInstruction("Greater", offset),
-            OpCode.Less => return simpleInstruction("Less", offset),
-            OpCode.Add => return simpleInstruction("Add", offset),
-            OpCode.Subtract => return simpleInstruction("Subtract", offset),
-            OpCode.Multiply => return simpleInstruction("Multiply", offset),
-            OpCode.Divide => return simpleInstruction("Divide", offset),
-            OpCode.Not => return simpleInstruction("Not", offset),
-            OpCode.Negate => return simpleInstruction("Negate", offset),
-            OpCode.Print => return simpleInstruction("Print", offset),
-            OpCode.JumpIfFalse => return jumpInstruction("JumpIfFalse", 1, chunk, offset),
-            OpCode.Jump => return jumpInstruction("Jump", 1, chunk, offset),
-            OpCode.Loop => return jumpInstruction("Loop", -1, chunk, offset),
-            OpCode.GetProperty => return constantInstruction("GetProperty", chunk, offset),
-            OpCode.SetProperty => return constantInstruction("SetProperty", chunk, offset),
-            OpCode.Return => return simpleInstruction("Return", offset),
-            OpCode.Call => return byteInstruction("Call", chunk, offset),
-            OpCode.Class => return simpleInstruction("Class", offset),
-            OpCode.Inherit => return simpleInstruction("Inherit", offset),
-            OpCode.Subclass => return constantInstruction("Subclass", chunk, offset),
-            OpCode.Method => return constantInstruction("Method", chunk, offset),
-            OpCode.Invoke => return invokeInstruction("Invoke", chunk, offset),
-            OpCode.Super => return invokeInstruction("Super", chunk, offset),
-            OpCode.Closure => {
+            .Constant => return constantInstruction("Constant", chunk, offset),
+            .Nil => return simpleInstruction("Nil", offset),
+            .True => return simpleInstruction("True", offset),
+            .False => return simpleInstruction("False", offset),
+            .Pop => return simpleInstruction("Pop", offset),
+            .GetLocal => return byteInstruction("GetLocal", chunk, offset),
+            .SetLocal => return byteInstruction("SetLocal", chunk, offset),
+            .GetUpvalue => return byteInstruction("GetUpvalue", chunk, offset),
+            .SetUpvalue => return byteInstruction("SetUpvalue", chunk, offset),
+            .CloseUpvalue => return simpleInstruction("CloseUpvalue", offset),
+            .DefineGlobal => return constantInstruction("DefineGlobal", chunk, offset),
+            .GetGlobal => return constantInstruction("GetGlobal", chunk, offset),
+            .SetGlobal => return constantInstruction("SetGlobal", chunk, offset),
+            .GetSuper => return constantInstruction("GetSuper", chunk, offset),
+            .Equal => return simpleInstruction("Equal", offset),
+            .Greater => return simpleInstruction("Greater", offset),
+            .Less => return simpleInstruction("Less", offset),
+            .Add => return simpleInstruction("Add", offset),
+            .Subtract => return simpleInstruction("Subtract", offset),
+            .Multiply => return simpleInstruction("Multiply", offset),
+            .Divide => return simpleInstruction("Divide", offset),
+            .Not => return simpleInstruction("Not", offset),
+            .Negate => return simpleInstruction("Negate", offset),
+            .Print => return simpleInstruction("Print", offset),
+            .JumpIfFalse => return jumpInstruction("JumpIfFalse", 1, chunk, offset),
+            .Jump => return jumpInstruction("Jump", 1, chunk, offset),
+            .Loop => return jumpInstruction("Loop", -1, chunk, offset),
+            .GetProperty => return constantInstruction("GetProperty", chunk, offset),
+            .SetProperty => return constantInstruction("SetProperty", chunk, offset),
+            .Return => return simpleInstruction("Return", offset),
+            .Call => return byteInstruction("Call", chunk, offset),
+            .Class => return simpleInstruction("Class", offset),
+            .Inherit => return simpleInstruction("Inherit", offset),
+            // .Subclass => return constantInstruction("Subclass", chunk, offset),
+            .Method => return constantInstruction("Method", chunk, offset),
+            .Invoke => return invokeInstruction("Invoke", chunk, offset),
+            .Super => return invokeInstruction("Super", chunk, offset),
+            .Closure => {
                 const constant = chunk.code.items[offset + 1];
                 std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.items[constant].toString() });
                 const function = chunk.constants.items[constant].Obj.data.Function;
@@ -162,19 +208,30 @@ pub const Chunk = struct {
     fn jumpInstruction(name: []const u8, sign: i32, chunk: *const Chunk, offset: usize) usize {
         var jump = @intCast(i16, chunk.code.items[offset + 1]) << 8;
         jump |= @intCast(i16, chunk.code.items[offset + 2]);
-        std.debug.warn("{}: {} . {}\n", .{ name, offset, @intCast(i16, offset + 3) + sign * jump });
+        std.debug.warn("{}: {} . {}\n", .{
+            name,
+            offset,
+            @intCast(i16, offset + 3) + sign * jump,
+        });
         return offset + 3;
     }
 
     fn byteInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
         const slot = chunk.code.items[offset + 1];
-        std.debug.warn("{}: {}\n", .{ slot, name });
+        std.debug.warn("{}: {}\n", .{
+            slot,
+            name,
+        });
         return offset + 2;
     }
 
     fn constantInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
         const constant = chunk.code.items[offset + 1];
-        std.debug.warn("{} {}: {}\n", .{ name, constant, chunk.constants.items[constant].toString() });
+        std.debug.warn("{} {}: {}\n", .{
+            name,
+            constant,
+            chunk.constants.items[constant].toString(),
+        });
         return offset + 2;
     }
 

@@ -36,7 +36,7 @@ pub const ObjString = struct {
         const hash = hashFn(bytes);
 
         const interned = vm.strings.get(bytes);
-        if (interned) |s| return s.value;
+        if (interned) |s| return s;
 
         const heapChars = allocator.alloc(u8, bytes.len) catch unreachable;
         std.mem.copy(u8, heapChars, bytes);
@@ -50,7 +50,7 @@ pub const ObjString = struct {
         const interned = vm.strings.get(bytes);
         if (interned) |s| {
             allocator.free(bytes);
-            return s.value;
+            return s;
         }
 
         return allocate(bytes, hash);
@@ -109,6 +109,13 @@ pub const ObjClosure = struct {
 
     pub fn allocate(function: *ObjFunction) *Obj {
         var upvalues = allocator.alloc(*Obj, function.upvalueCount) catch unreachable;
+        
+        // TODO: zig-lox
+        // Need to null this out rather than leaving it
+        // uninitialized becaue the GC might try to look at it
+        // before it gets filled in with values
+        // for (upvalues) |*upvalue| upvalue.* = null;
+
         const closure = Obj.allocate();
         closure.data = Obj.Data{
             .Closure = ObjClosure{
@@ -123,7 +130,7 @@ pub const ObjClosure = struct {
 pub const ObjClass = struct {
     name: *ObjString,
     super: ?*ObjClass,
-    methods: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
+    methods: std.StringHashMap(Value),
 
     pub fn allocate(name: *ObjString, super: ?*ObjClass) *Obj {
         const closure = Obj.allocate();
@@ -131,7 +138,7 @@ pub const ObjClass = struct {
             .Class = ObjClass{
                 .name = name,
                 .super = super,
-                .methods = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
+                .methods = std.StringHashMap(Value).init(allocator),
             },
         };
         return closure;
@@ -140,14 +147,14 @@ pub const ObjClass = struct {
 
 pub const ObjInstance = struct {
     class: *ObjClass,
-    fields: std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn),
+    fields: std.StringHashMap(Value),
 
     pub fn allocate(class: *ObjClass) *Obj {
         const instance = Obj.allocate();
         instance.data = Obj.Data{
             .Instance = ObjInstance{
                 .class = class,
-                .fields = std.HashMap([]const u8, Value, ObjString.hashFn, ObjString.eqlFn).init(allocator),
+                .fields = std.StringHashMap(Value).init(allocator),
             },
         };
         return instance;
@@ -237,7 +244,7 @@ pub const Obj = struct {
         }
     }
 
-    fn equal(self: *const Obj, other: *const Obj) bool {
+    pub fn equal(self: *const Obj, other: *const Obj) bool {
         switch (self.data) {
             .BoundMethod, .Upvalue, .Closure, .Function, .Native, .String, .Instance, .Class => return self == other,
         }
@@ -265,7 +272,7 @@ pub const Obj = struct {
         }
 
         switch (self.data) {
-            .Instance => |i| {
+            .Instance => |*i| {
                 i.fields.deinit();
                 allocator.destroy(self);
             },
@@ -393,12 +400,12 @@ pub fn markObject(object: *Obj) void {
 }
 
 pub fn markTable() void {
-    var i: usize = 0;
-    while (i < vm.strings.entries.len) : (i += 1) {
-        var entry = &vm.strings.entries[i];
-        // markObject(entry.key);
-        // markValue(entry.value);
-    }
+    // var i: usize = 0;
+    // while (i < vm.strings.entries.len) : (i += 1) {
+    //     var entry = &vm.strings.entries[i];
+    //     markObject(entry.key);
+    //     markValue(entry.value);
+    // }
 }
 
 pub fn markCompilerRoots() void {
@@ -468,11 +475,11 @@ pub fn sweep() void {
 }
 
 pub fn tableRemoveWhite() void {
-    var i: usize = 0;
-    while (i < vm.strings.entries.len) : (i += 1) {
-        const entry = &vm.strings.entries[i];
-        // if (entry.kv.key != "" and !entry.key.obj.isMarked) {
-        //     tableDelete(table, entry.key);
-        // }
-    }
+    // var i: usize = 0;
+    // while (i < vm.strings.entries.len) : (i += 1) {
+    //     const entry = &vm.strings.entries[i];
+    //     if (entry.kv.key != "" and !entry.key.obj.isMarked) {
+    //         tableDelete(table, entry.key);
+    //     }
+    // }
 }
