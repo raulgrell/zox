@@ -22,7 +22,7 @@ const ObjInstance = @import("./object.zig").ObjInstance;
 const ObjClass = @import("./object.zig").ObjClass;
 const ObjBoundMethod = @import("./object.zig").ObjBoundMethod;
 
-const verbose = true;
+const verbose = false;
 
 pub const CallFrame = struct {
     closure: *Obj,
@@ -530,11 +530,6 @@ pub const VM = struct {
                     for (superclass.methods.items()) |entry| {
                         try subclass.methods.put(entry.key, entry.value);
                     }
-                    // var it = superclass.Obj.data.Class.methods.iterator();
-                    // while (it.next()) |e| {
-                    //     var slot = try subclass.Obj.data.Class.methods.getOrPut(e.key);
-                    //     slot.entry.value = e.value;
-                    // }
                     _ = self.pop();
                 },
                 .Method => {

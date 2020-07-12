@@ -790,16 +790,13 @@ pub const Instance = struct {
         const name = self.identifierConstant(self.parser.previous);
         if (canAssign and self.match(.Equal)) {
             self.expression();
-            self.emitOp(.SetProperty);
-            self.emitByte(name);
+            self.emitUnaryOp(.SetProperty, name);
         } else if (self.match(.LeftParen)) {
             const argCount = self.argumentList();
-            self.emitOp(.Invoke);
-            self.emitByte(name);
+            self.emitUnaryOp(.Invoke, name);
             self.emitByte(argCount);
         } else {
-            self.emitOp(.GetProperty);
-            self.emitByte(name);
+            self.emitUnaryOp(.GetProperty, name);
         }
     }
 

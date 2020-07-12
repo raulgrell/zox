@@ -13,20 +13,18 @@ const lib = @import("./lib.zig");
 
 export var vm: VM = undefined;
 
-// pub const allocator = init: {
-//     if (comptime std.Target.current.isWasm()) {
-//         break :init std.heap.page_allocator;
-//     } else {
-//         break :init std.testing.allocator;
-//     }
-// };
-
-pub const allocator = std.testing.allocator;
+pub const allocator = init: {
+    if (comptime std.Target.current.isWasm()) {
+        break :init std.heap.page_allocator;
+    } else {
+        break :init std.testing.allocator;
+    }
+};
 
 pub fn main() !void {
-    // if (comptime std.Target.current.isWasm()) {
-    //     try repl(allocator);
-    // } else {
+    if (comptime std.Target.current.isWasm()) {
+        try repl(allocator);
+    } else {
         const args = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, args);
 
@@ -36,7 +34,7 @@ pub fn main() !void {
             3 => try runSource(args[2]),
             else => showUsage(),
         }
-    // }
+    }
 }
 
 fn repl() !void {
@@ -87,7 +85,7 @@ fn runSource(source: []const u8) !void {
 
     vm.defineNative("clock", lib.clockNative);
 
-    std.debug.warn("Opening: {}\n", .{source});
+    std.debug.warn("> {}\n", .{source});
 
     vm.interpret(source) catch |err| switch (err) {
         error.CompileError => std.process.exit(65),
