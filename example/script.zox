@@ -36,14 +36,15 @@ class F {
   }
 }
 
+var ff = F();
+ff.cook();
+
 class D < F {
   fn finish(ingredient) {
     super.finish("icing");
   }
 }
 
-var ff = F();
-ff.cook();
 
 var dd = D();
 dd.cook();

@@ -13,27 +13,27 @@ fn keyword(token_type: TokenType, name: []const u8) Keyword {
 }
 
 pub const keywords = [_]Keyword{
-    keyword(TokenType.And, "and"),
-    keyword(TokenType.Break, "break"),
-    keyword(TokenType.Class, "class"),
-    keyword(TokenType.Continue, "continue"),
-    keyword(TokenType.Const, "const"),
-    keyword(TokenType.Else, "else"),
-    keyword(TokenType.False, "false"),
-    keyword(TokenType.Fn, "fn"),
-    keyword(TokenType.For, "for"),
-    keyword(TokenType.If, "if"),
-    keyword(TokenType.Nil, "nil"),
-    keyword(TokenType.Or, "or"),
-    keyword(TokenType.Print, "print"),
-    keyword(TokenType.Return, "return"),
-    keyword(TokenType.Static, "static"),
-    keyword(TokenType.Super, "super"),
-    keyword(TokenType.This, "this"),
-    keyword(TokenType.True, "true"),
-    keyword(TokenType.Var, "var"),
-    keyword(TokenType.With, "with"),
-    keyword(TokenType.While, "while"),
+    keyword(.And, "and"),
+    keyword(.Break, "break"),
+    keyword(.Class, "class"),
+    keyword(.Continue, "continue"),
+    keyword(.Const, "const"),
+    keyword(.Else, "else"),
+    keyword(.False, "false"),
+    keyword(.Fn, "fn"),
+    keyword(.For, "for"),
+    keyword(.If, "if"),
+    keyword(.Nil, "nil"),
+    keyword(.Or, "or"),
+    keyword(.Print, "print"),
+    keyword(.Return, "return"),
+    keyword(.Static, "static"),
+    keyword(.Super, "super"),
+    keyword(.This, "this"),
+    keyword(.True, "true"),
+    keyword(.Var, "var"),
+    keyword(.With, "with"),
+    keyword(.While, "while"),
 };
 
 pub const Token = struct {
@@ -50,8 +50,8 @@ pub const Token = struct {
     }
 
     pub fn symbol(name: []const u8) Token {
-        return Token {
-            .token_type = TokenType.Identifier,
+        return Token{
+            .token_type = .Identifier,
             .lexeme = name,
             .line = 0,
         };
@@ -128,30 +128,30 @@ pub const Scanner = struct {
         self.start = self.start[self.current..];
         self.current = 0;
 
-        if (self.isAtEnd()) return self.makeToken(TokenType.EOF);
+        if (self.isAtEnd()) return self.makeToken(.EOF);
 
         const c = self.advance();
         switch (c) {
-            '(' => return self.makeToken(TokenType.LeftParen),
-            ')' => return self.makeToken(TokenType.RightParen),
-            '{' => return self.makeToken(TokenType.LeftBrace),
-            '}' => return self.makeToken(TokenType.RightBrace),
-            ',' => return self.makeToken(TokenType.Comma),
-            '.' => return self.makeToken(TokenType.Dot),
-            '-' => return self.makeToken(TokenType.Minus),
-            '+' => return self.makeToken(TokenType.Plus),
-            ':' => return self.makeToken(TokenType.Colon),
-            ';' => return self.makeToken(TokenType.Semicolon),
-            '*' => return self.makeToken(TokenType.Star),
-            '!' => return self.makeToken(if (self.match('=')) TokenType.BangEqual else TokenType.Bang),
-            '=' => return self.makeToken(if (self.match('=')) TokenType.EqualEqual else TokenType.Equal),
-            '<' => return self.makeToken(if (self.match('=')) TokenType.LessEqual else TokenType.Less),
-            '>' => return self.makeToken(if (self.match('=')) TokenType.GreaterEqual else TokenType.Greater),
+            '(' => return self.makeToken(.LeftParen),
+            ')' => return self.makeToken(.RightParen),
+            '{' => return self.makeToken(.LeftBrace),
+            '}' => return self.makeToken(.RightBrace),
+            ',' => return self.makeToken(.Comma),
+            '.' => return self.makeToken(.Dot),
+            '-' => return self.makeToken(.Minus),
+            '+' => return self.makeToken(.Plus),
+            ':' => return self.makeToken(.Colon),
+            ';' => return self.makeToken(.Semicolon),
+            '*' => return self.makeToken(.Star),
+            '!' => return self.makeToken(if (self.match('=')) .BangEqual else .Bang),
+            '=' => return self.makeToken(if (self.match('=')) .EqualEqual else .Equal),
+            '<' => return self.makeToken(if (self.match('=')) .LessEqual else .Less),
+            '>' => return self.makeToken(if (self.match('=')) .GreaterEqual else .Greater),
             '/' => {
                 if (self.match('/')) {
                     while (self.peek() != '\n' and !self.isAtEnd()) _ = self.advance();
                 }
-                return self.makeToken(TokenType.Slash);
+                return self.makeToken(.Slash);
             },
             '"' => return self.readString(),
             else => {
@@ -160,7 +160,7 @@ pub const Scanner = struct {
                 } else if (isAlpha(c)) {
                     return self.readIdentifier();
                 } else if (c == 0) {
-                    return self.makeToken(TokenType.EOF);
+                    return self.makeToken(.EOF);
                 }
                 return self.makeError("Unexpected character");
             },
@@ -168,7 +168,7 @@ pub const Scanner = struct {
     }
 
     pub fn makeError(self: Scanner, message: []const u8) Token {
-        return Token.create(TokenType.Error, message, self.line);
+        return Token.create(.Error, message, self.line);
     }
 
     pub fn makeToken(self: Scanner, token_type: TokenType) Token {
@@ -247,7 +247,7 @@ pub const Scanner = struct {
         for (keywords) |kw, i| {
             if (std.mem.eql(u8, kw.name, text)) return kw.token_type;
         }
-        return TokenType.Identifier;
+        return .Identifier;
     }
 
     fn readString(self: *Scanner) Token {
@@ -264,7 +264,7 @@ pub const Scanner = struct {
         _ = self.advance();
 
         // Trim the surrounding quotes.
-        return self.makeLiteral(TokenType.String, self.start[1 .. self.current - 1]);
+        return self.makeLiteral(.String, self.start[1 .. self.current - 1]);
     }
 
     fn readNumber(self: *Scanner) Token {
@@ -274,6 +274,6 @@ pub const Scanner = struct {
             _ = self.advance();
             while (isDigit(self.peek())) _ = self.advance();
         }
-        return self.makeLiteral(TokenType.Number, self.start[0..self.current]);
+        return self.makeLiteral(.Number, self.start[0..self.current]);
     }
 };

@@ -15,111 +15,374 @@ fn growCapacity(capacity: usize) usize {
     return if (capacity < 8) 8 else capacity * 2;
 }
 
-extern var vm: VM;
-
-
 pub const Obj = struct {
-    data: Data,
-    isMarked: bool,
+    objType: Type,
     next: ?*Obj,
+    isMarked: bool,
 
-    pub const Data = union(ObjType) {
-        Instance: ObjInstance,
-        Class: ObjClass,
-        Upvalue: ObjUpvalue,
-        String: ObjString,
-        Function: ObjFunction,
-        Closure: ObjClosure,
-        Native: ObjNative,
-        BoundMethod: ObjBoundMethod,
+    pub const Type = enum {
+        Instance,
+        Class,
+        Closure,
+        Function,
+        BoundMethod,
+        Native,
+        String,
+        Upvalue,
     };
+
+    pub fn create(vm: *VM, comptime T: type, objType: Type) !*Obj {
+        const ptr = try vm.allocator.create(T);
+        ptr.obj = Obj{
+            .next = vm.objects,
+            .objType = objType,
+            .isMarked = false,
+        };
+
+        vm.objects = &ptr.obj;
+
+        if (verbose_gc) {
+            std.debug.warn("{} allocate {} for {}\n", .{ @ptrToInt(&ptr.obj), @sizeOf(T), @typeName(T) });
+        }
+
+        return &ptr.obj;
+    }
+
+    pub fn destroy(self: *Obj, vm: *VM) void {
+        if (verbose_gc) {
+            std.debug.warn("{} free {} {}\n", .{ @ptrToInt(self), self.objType, self.value() });
+        }
+
+        switch (self.objType) {
+            .String => self.asString().destroy(vm),
+            .Function => self.asFunction().destroy(vm),
+            .Native => self.asNative().destroy(vm),
+            .Closure => self.asClosure().destroy(vm),
+            .Upvalue => self.asUpvalue().destroy(vm),
+            .Class => self.asClass().destroy(vm),
+            .Instance => self.asInstance().destroy(vm),
+            .BoundMethod => self.asBoundMethod().destroy(vm),
+        }
+    }
+
+    pub fn is(self: *Obj, objType: ObjType) bool {
+        return self.objType == objType;
+    }
+
+    pub fn asString(self: *Obj) *String {
+        return @fieldParentPtr(String, "obj", self);
+    }
+
+    pub fn asFunction(self: *Obj) *Function {
+        return @fieldParentPtr(Function, "obj", self);
+    }
+
+    pub fn asNative(self: *Obj) *Native {
+        return @fieldParentPtr(Native, "obj", self);
+    }
+
+    pub fn asClosure(self: *Obj) *Closure {
+        return @fieldParentPtr(Closure, "obj", self);
+    }
+
+    pub fn asUpvalue(self: *Obj) *Upvalue {
+        return @fieldParentPtr(Upvalue, "obj", self);
+    }
+
+    pub fn asClass(self: *Obj) *Class {
+        return @fieldParentPtr(Class, "obj", self);
+    }
+
+    pub fn asInstance(self: *Obj) *Instance {
+        return @fieldParentPtr(Instance, "obj", self);
+    }
+
+    pub fn asBoundMethod(self: *Obj) *BoundMethod {
+        return @fieldParentPtr(BoundMethod, "obj", self);
+    }
 
     pub fn value(self: *Obj) Value {
         return Value{ .Obj = self };
     }
 
-    pub fn toString(self: Obj) []const u8 {
-        switch (self.data) {
-            .Instance => |i| return i.class.name.bytes,
-            .BoundMethod => |m| return m.method.function.name.?.data.String.bytes,
-            .Class => |c| return c.name.bytes,
-            .Upvalue => |u| return "Upvalue",
-            .Closure => |c| return "Closure",
-            .Function => |f| return if (f.name) |n| n.data.String.bytes else "Function",
-            .Native => |n| return "Native",
-            .String => |s| return s.bytes,
+    pub fn toString(self: *Obj) []const u8 {
+        switch (self.objType) {
+            .Instance => {
+                return self.asInstance().class.name.bytes;
+            },
+            .BoundMethod => {
+                return self.asBoundMethod().method.function.name.?.bytes;
+            },
+            .Class => {
+                return self.asClass().name.bytes;
+            },
+            .Upvalue => {
+                return "Upvalue";
+            },
+            .Closure => {
+                return "Closure";
+            },
+            .Function => {
+                return if (self.asFunction().name) |n| n.bytes else "Function";
+            },
+            .Native => {
+                return "Native";
+            },
+            .String => {
+                return self.asString().bytes;
+            },
         }
     }
 
     pub fn equal(self: *const Obj, other: *const Obj) bool {
-        switch (self.data) {
+        switch (self.objType) {
             .BoundMethod, .Upvalue, .Closure, .Function, .Native, .String, .Instance, .Class => return self == other,
         }
     }
 
-    pub fn allocate() *Obj {
-        var object = create(Obj);
-        object.* = Obj{
-            .data = undefined,
-            .isMarked = false,
-            .next = vm.objects,
-        };
-        vm.objects = object;
+    pub const String = struct {
+        obj: Obj,
+        bytes: []const u8,
 
-        if (verbose_gc) {
-            std.debug.warn("{} allocate object\n", .{@ptrToInt(object)});
+        pub fn create(vm: *VM, bytes: []const u8) !*String {
+            if (vm.strings.get(bytes)) |interned| {
+                vm.allocator.free(bytes);
+                return interned;
+            } else {
+                const obj = try Obj.create(vm, String, .String);
+                const out = obj.asString();
+                out.* = String{
+                    .obj = obj.*,
+                    .bytes = bytes,
+                };
+                // Make sure string is visible to the GC during allocation
+                vm.push(out.obj.value());
+                try vm.strings.putNoClobber(bytes, string);
+                _ = vm.pop();
+                return out;
+            }
         }
 
-        return object;
-    }
+        pub fn allocate(vm: *VM, bytes: []const u8) !*String {
+            const string = try Obj.create(vm, String, .String);
+            string.asString().bytes = bytes;
 
-    pub fn free(self: *Obj) void {
-        if (verbose_gc) {
-            std.debug.warn("{} free type {}\n", .{ @ptrToInt(self), @tagName(self.data) });
+            // Make sure string is visible to the GC during allocation
+            vm.push(string.value());
+            _ = vm.strings.put(bytes, string.asString()) catch unreachable;
+            _ = vm.pop();
+            return string.asString();
         }
 
-        switch (self.data) {
-            .Instance => |*i| {
-                i.fields.deinit();
-                allocator.destroy(self);
-            },
-            .BoundMethod => |m| allocator.destroy(self),
-            .Class => |c| allocator.destroy(self),
-            .Upvalue => |u| allocator.destroy(self),
-            .Function => |f| {
-                if (f.name) |n| allocator.free(n.data.String.bytes);
-                allocator.destroy(self);
-            },
-            .Native => {
-                allocator.destroy(self);
-            },
-            .String => |s| {
-                allocator.free(s.bytes);
-                allocator.destroy(self);
-            },
-            .Closure => |c| {
-                allocator.free(c.upvalues);
-                allocator.destroy(self);
-            },
+        pub fn copy(vm: *VM, bytes: []const u8) !*String {
+            const interned = vm.strings.get(bytes);
+            if (interned) |s| return s;
+
+            const heapChars = allocator.alloc(u8, bytes.len) catch unreachable;
+            std.mem.copy(u8, heapChars, bytes);
+
+            return allocate(vm, heapChars);
         }
-    }
+
+        pub fn take(vm: *VM, bytes: []const u8) !*String {
+            const interned = vm.strings.get(bytes);
+            if (interned) |s| {
+                allocator.free(bytes);
+                return s;
+            }
+
+            return allocate(vm, bytes);
+        }
+
+        pub fn destroy(self: *String, vm: *VM) void {
+            vm.allocator.free(self.bytes);
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const Upvalue = struct {
+        obj: Obj,
+        location: *Value,
+        closed: Value,
+        next: ?*Obj.Upvalue,
+
+        pub fn allocate(slot: *Value, next: ?*Obj) *Obj {
+            var upvalue = Obj.create();
+            upvalue.data = Obj.Data{
+                .Upvalue = ObjUpvalue{
+                    .closed = Value.Nil,
+                    .location = slot,
+                    .next = next,
+                },
+            };
+            return upvalue;
+        }
+
+        pub fn create(vm: *VM, location: *Value, next: ?*Upvalue) !*Upvalue {
+            const obj = try Obj.create(vm, Upvalue, .Upvalue);
+            obj.asUpvalue().* = Upvalue{
+                .obj = obj.*,
+                .location = location,
+                .closed = Value.nil(),
+                .next = null,
+            };
+
+            return obj.asUpvalue();
+        }
+
+        pub fn destroy(self: *Upvalue, vm: *VM) void {
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const Closure = struct {
+        obj: Obj,
+        function: *Function,
+        upvalues: []?*Obj.Upvalue,
+
+        pub fn create(vm: *VM, function: *Function) !*Closure {
+            const upvalues = try vm.allocator.alloc(?*Upvalue, function.upvalueCount);
+            for (upvalues) |*upvalue| upvalue.* = null;
+
+            const obj = try Obj.create(vm, Closure, .Closure);
+            const out = obj.asClosure();
+
+            out.* = Closure{
+                .obj = obj.*,
+                .function = function,
+                .upvalues = upvalues,
+            };
+
+            return out;
+        }
+
+        pub fn destroy(self: *Closure, vm: *VM) void {
+            vm.allocator.free(self.upvalues);
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const Class = struct {
+        obj: Obj,
+        name: *String,
+        super: ?*Class,
+        methods: std.StringHashMap(Value),
+
+        pub fn create(vm: *VM, name: *String, superclass: ?*Obj.Class) !*Class {
+            const obj = try Obj.create(vm, Class, .Class);
+            const out = obj.asClass();
+
+            out.* = Class{
+                .obj = obj.*,
+                .name = name,
+                .super = superclass,
+                .methods = std.StringHashMap(Value).init(vm.allocator),
+            };
+
+            return out;
+        }
+
+        pub fn destroy(self: *Class, vm: *VM) void {
+            self.methods.deinit();
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const Instance = struct {
+        obj: Obj,
+        class: *Class,
+        fields: std.StringHashMap(Value),
+
+        pub fn create(vm: *VM, class: *Class) !*Instance {
+            const obj = try Obj.create(vm, Instance, .Instance);
+            const out = obj.asInstance();
+
+            out.* = Instance{
+                .obj = obj.*,
+                .class = class,
+                .fields = std.StringHashMap(Value).init(vm.allocator),
+            };
+
+            return out;
+        }
+
+        pub fn destroy(self: *Instance, vm: *VM) void {
+            self.fields.deinit();
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const BoundMethod = struct {
+        obj: Obj,
+        receiver: Value,
+        method: *Closure,
+
+        pub fn create(vm: *VM, receiver: Value, method: *Closure) !*BoundMethod {
+            const obj = try Obj.create(vm, BoundMethod, .BoundMethod);
+            const out = obj.asBoundMethod();
+
+            out.* = BoundMethod{
+                .obj = obj.*,
+                .receiver = receiver,
+                .method = method,
+            };
+
+            return out;
+        }
+
+        pub fn destroy(self: *BoundMethod, vm: *VM) void {
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const Function = struct {
+        obj: Obj,
+        arity: u8,
+        upvalueCount: u8,
+        chunk: Chunk,
+        name: ?*Obj.String,
+
+        pub fn create(vm: *VM) !*Function {
+            const obj = try Obj.create(vm, Function, .Function);
+            const out = obj.asFunction();
+            out.* = Function{
+                .obj = obj.*,
+                .arity = 0,
+                .upvalueCount = 0,
+                .name = null,
+                .chunk = Chunk.init(),
+            };
+
+            return out;
+        }
+
+        pub fn destroy(self: *Function, vm: *VM) void {
+            self.chunk.deinit();
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const Native = struct {
+        obj: Obj,
+        function: Fn,
+
+        pub const Fn = fn (args: []Value) Value;
+
+        pub fn create(vm: *VM, function: Fn) !*Native {
+            const obj = try Obj.create(vm, Native, .Native);
+            const out = obj.asNative();
+            out.* = Native{
+                .obj = obj.*,
+                .function = function,
+            };
+            return out;
+        }
+
+        pub fn destroy(self: *Native, vm: *VM) void {
+            vm.allocator.destroy(self);
+        }
+    };
 };
-
-pub fn create(comptime T: type) *T {
-    return &reallocate(T, null, 0, 1).?[0];
-}
-
-pub fn alloc(comptime T: type, count: usize) []T {
-    return reallocate(T, null, 0, count);
-}
-
-pub fn dealloc(comptime T: type, pointer: *T) void {
-    reallocate(T, pointer, 1, 0);
-}
-
-pub fn destroy(comptime T: type, pointer: []T) void {
-    reallocate(T, pointer, pointer.len, 0);
-}
 
 pub fn reallocate(comptime T: type, previous: ?[]T, oldSize: usize, newSize: usize) ?[]T {
     vm.bytesAllocated += newSize - oldSize;
@@ -141,152 +404,4 @@ pub fn reallocate(comptime T: type, previous: ?[]T, oldSize: usize, newSize: usi
     } else {
         return allocator.alloc(T, newSize) catch null;
     }
-}
-
-pub fn collectGarbage() void {
-    var before: usize = undefined;
-    if (verbose_gc) {
-        std.debug.warn("-- gc begin\n", .{});
-        before = vm.bytesAllocated;
-    }
-
-    markRoots();
-    traceReferences();
-    tableRemoveWhite();
-    sweep();
-
-    vm.nextGC = vm.bytesAllocated * growth_factor_gc;
-
-    if (verbose_gc) {
-        std.debug.warn("-- gc end\n", .{});
-        std.debug.warn("   collected {} bytes (from {} to {}) next at {}\n", .{ before - vm.bytesAllocated, before, vm.bytesAllocated, vm.nextGC });
-    }
-}
-
-pub fn markRoots() void {
-    for (vm.stack.items) |*v| markValue(v);
-
-    var i: usize = 0;
-    while (i < vm.frame_count) : (i += 1) {
-        // markObject(vm.frames[i].closure);
-    }
-
-    var upvalue: ?*Obj = vm.openUpvalues;
-    while (upvalue) |u| : (upvalue = u.next) {
-        // markObject(u);
-    }
-
-    markTable();
-    markCompilerRoots();
-    // markObject(vm.initString.?);
-}
-
-pub fn markValue(value: *Value) void {
-    switch (value.*) {
-        .Obj => |o| markObject(o),
-        else => return,
-    }
-}
-
-pub fn markObject(object: *Obj) void {
-    if (object.isMarked) return;
-
-    if (verbose_gc) {
-        std.debug.warn("{} mark {}\n", .{ @ptrToInt(object), @tagName(object.data) });
-    }
-
-    object.isMarked = true;
-
-    if (vm.grayStack.?.len < vm.grayCount + 1) {
-        const capacity = growCapacity(vm.grayStack.?.len);
-        vm.grayStack = allocator.realloc(vm.grayStack.?, capacity) catch unreachable;
-    }
-
-    vm.grayStack.?[vm.grayCount] = object;
-    vm.grayCount += 1;
-}
-
-pub fn markTable() void {
-    // var i: usize = 0;
-    // while (i < vm.strings.entries.len) : (i += 1) {
-    //     var entry = &vm.strings.entries[i];
-    //     markObject(entry.key);
-    //     markValue(entry.value);
-    // }
-}
-
-pub fn markCompilerRoots() void {
-    var compiler: ?*Compiler = vm.instance.current;
-    // while (compiler) |c| {
-    //     markObject(c.function);
-    //     compiler = c.enclosing;
-    // }
-}
-
-pub fn traceReferences() void {
-    while (vm.grayCount > 0) {
-        vm.grayCount -= 1;
-        var object: *Obj = vm.grayStack.?[vm.grayCount];
-        blackenObject(object);
-    }
-}
-
-pub fn blackenObject(object: *Obj) void {
-    if (verbose_gc) {
-        std.debug.warn("{} blacken {}\n", .{ @ptrToInt(object), @tagName(object.data) });
-    }
-
-    switch (object.data) {
-        .Instance => |i| {
-            //markObject(i.class);
-            //markTable(&instance.fields);
-        },
-        .BoundMethod => |m| {},
-        .Class => |c| {},
-        .Closure => |c| {
-            markObject(object);
-            //for (object.data.Closure.upvalues) |u| markObject(u);
-        },
-        .Upvalue => |u| {
-            markValue(&object.data.Upvalue.closed);
-        },
-        .Function => |f| {
-            if (f.name) |n| markObject(n);
-            for (f.chunk.constants.items) |*c| markValue(c);
-        },
-        .Native, .String => {},
-    }
-}
-
-pub fn markArray(array: *ValueArray) void {}
-
-pub fn sweep() void {
-    var previous: ?*Obj = null;
-    var object: ?*Obj = vm.objects;
-    while (object) |o| {
-        if (o.isMarked) {
-            o.isMarked = false;
-            previous = o;
-            object = o.next;
-        } else {
-            var unreached: *Obj = o;
-            object = o.next;
-            if (previous) |p| {
-                p.next = object;
-            } else {
-                vm.objects = object;
-            }
-            allocator.destroy(unreached);
-        }
-    }
-}
-
-pub fn tableRemoveWhite() void {
-    // var i: usize = 0;
-    // while (i < vm.strings.entries.len) : (i += 1) {
-    //     const entry = &vm.strings.entries[i];
-    //     if (entry.kv.key != "" and !entry.key.obj.isMarked) {
-    //         tableDelete(table, entry.key);
-    //     }
-    // }
 }

@@ -17,6 +17,10 @@ pub const Value = union(ValueType) {
     Obj: *Obj,
     Nil,
 
+    pub fn nil() Value {
+      return Value.Nil;
+    }
+
     pub fn toString(value: Value) []const u8 {
       switch (value) {
         .Bool => |b| return std.fmt.bufPrint(buffer[0..], "{}", .{b}) catch unreachable,

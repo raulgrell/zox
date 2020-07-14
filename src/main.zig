@@ -45,7 +45,7 @@ fn repl() !void {
     try vm.initialize();
     defer vm.destroy();
 
-    vm.defineNative("clock", lib.clockNative);
+    try vm.defineNative("clock", lib.clockNative);
 
     while (true) {
         try stdout.print("> ", .{});
@@ -63,7 +63,7 @@ fn runFile(path: []const u8) !void {
     try vm.initialize();
     defer vm.destroy();
 
-    vm.defineNative("clock", lib.clockNative);
+    try vm.defineNative("clock", lib.clockNative);
 
     std.debug.warn("Opening: {}\n", .{path});
 
@@ -83,7 +83,7 @@ fn runSource(source: []const u8) !void {
     try vm.initialize();
     defer vm.destroy();
 
-    vm.defineNative("clock", lib.clockNative);
+    try vm.defineNative("clock", lib.clockNative);
 
     std.debug.warn("> {}\n", .{source});
 
