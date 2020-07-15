@@ -11,8 +11,6 @@ const VM = @import("./vm.zig").VM;
 
 const lib = @import("./lib.zig");
 
-export var vm: VM = undefined;
-
 pub const allocator = init: {
     if (comptime std.Target.current.isWasm()) {
         break :init std.heap.page_allocator;
@@ -41,7 +39,7 @@ fn repl() !void {
     const stdout = std.io.getStdOut().outStream();
     const stdin = std.io.getStdIn().inStream();
 
-    vm = VM.create();
+    var vm = VM.create();
     try vm.initialize();
     defer vm.destroy();
 
@@ -59,7 +57,7 @@ fn repl() !void {
 }
 
 fn runFile(path: []const u8) !void {
-    vm = VM.create();
+    var vm = VM.create();
     try vm.initialize();
     defer vm.destroy();
 
@@ -79,7 +77,7 @@ fn runFile(path: []const u8) !void {
 
 
 fn runSource(source: []const u8) !void {
-    vm = VM.create();
+    var vm = VM.create();
     try vm.initialize();
     defer vm.destroy();
 

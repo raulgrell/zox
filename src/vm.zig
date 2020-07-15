@@ -11,8 +11,7 @@ const OpCode = @import("./chunk.zig").OpCode;
 const Value = @import("./value.zig").Value;
 const ValueType = @import("./value.zig").ValueType;
 
-const Instance = @import("./compiler.zig").Instance;
-const Compiler = @import("./compiler.zig").Compiler;
+const Context = @import("./compiler.zig").Context;
 
 const Obj = @import("./object.zig").Obj;
 
@@ -50,7 +49,7 @@ const FRAMES_MAX: u32 = 64;
 const STACK_MAX: usize = 1024;
 
 pub const VM = struct {
-    instance: Instance,
+    instance: Context,
     allocator: *Allocator,
 
     frames: [FRAMES_MAX]CallFrame,
@@ -74,7 +73,7 @@ pub const VM = struct {
     pub fn create() VM {
         return VM{
             .allocator = allocator,
-            .instance = Instance.create(),
+            .instance = Context{},
             .frames = undefined,
             .frame_count = 0,
             .current_frame_count = 0,
@@ -101,7 +100,7 @@ pub const VM = struct {
         defer std.debug.assert(self.stack.items.len == 0);
         errdefer self.resetStack();
 
-        var function = try self.instance.compile(source);
+        var function = try self.instance.compile(self, source);
         self.push(function.obj.value());
 
         const closure = try Obj.Closure.create(self, function);
@@ -507,10 +506,9 @@ pub const VM = struct {
                     self.frame_count -= 1;
 
                     const result = self.pop();
-                    if (self.frame_count == 0) {
-                        _ = self.pop();
+                    
+                    if (self.frame_count == 0) 
                         return;
-                    }
 
                     self.stack.items.len -= self.stack.items.len - frame.slots;
                     self.push(result);
@@ -537,6 +535,7 @@ pub const VM = struct {
                     for (superclass.methods.items()) |entry| {
                         try subclass.methods.put(entry.key, entry.value);
                     }
+
                     _ = self.pop();
                 },
                 .Method => {
@@ -572,11 +571,6 @@ pub const VM = struct {
                     const value = self.pop();
                     _ = self.pop();
                     self.push(value);
-                },
-                .Super => {
-                    const name = frame.readString();
-                    const superclass = self.pop().Obj.asClass();
-                    try self.bindMethod(superclass, name);
                 },
                 .NotEqual, .GreaterEqual, .LessEqual, .And, .Or => {
                     return self.runtimeError("Unused Opcode", .{});

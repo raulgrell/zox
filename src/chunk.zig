@@ -4,8 +4,6 @@ const allocator = @import("root").allocator;
 const Value = @import("./value.zig").Value;
 const VM = @import("./vm.zig").VM;
 
-extern var vm: VM;
-
 pub const OpCode = enum(u8) {
     Constant,
     Nil,
@@ -47,7 +45,6 @@ pub const OpCode = enum(u8) {
     Method,
     Class,
     Inherit,
-    Super,
     // Subclass,
     Loop,
     Return,
@@ -104,7 +101,7 @@ pub const Chunk = struct {
     pub fn disassemble(chunk: *Chunk, name: []const u8) void {
         std.debug.warn("== {} ==\n", .{name});
         var i: usize = 0;
-        while (i < chunk.code.len) {
+        while (i < chunk.code.items.len) {
             i = disassembleInstruction(chunk, i);
         }
     }
@@ -171,11 +168,11 @@ pub const Chunk = struct {
             // .Subclass => return constantInstruction("Subclass", chunk, offset),
             .Method => return constantInstruction("Method", chunk, offset),
             .Invoke => return invokeInstruction("Invoke", chunk, offset),
-            .Super => return invokeInstruction("Super", chunk, offset),
+            .SuperInvoke => return invokeInstruction("SuperInvoke", chunk, offset),
             .Closure => {
                 const constant = chunk.code.items[offset + 1];
                 std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.items[constant].toString() });
-                const function = chunk.constants.items[constant].Obj.data.Function;
+                const function = chunk.constants.items[constant].Obj.asFunction();
                 var i: usize = 0;
                 while (i < function.upvalueCount) : (i += 1) {
                     const isLocal = chunk.code.items[offset + 2 + i] != 0;
@@ -202,7 +199,7 @@ pub const Chunk = struct {
             constant,
             chunk.constants.items[constant].toString(),
         });
-        return offset + 2;
+        return offset + 3;
     }
 
     fn jumpInstruction(name: []const u8, sign: i32, chunk: *const Chunk, offset: usize) usize {
@@ -219,8 +216,8 @@ pub const Chunk = struct {
     fn byteInstruction(name: []const u8, chunk: *const Chunk, offset: usize) usize {
         const slot = chunk.code.items[offset + 1];
         std.debug.warn("{}: {}\n", .{
-            slot,
             name,
+            slot,
         });
         return offset + 2;
     }

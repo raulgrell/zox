@@ -7,13 +7,8 @@ const ValueType = @import("value.zig").ValueType;
 const Chunk = @import("chunk.zig").Chunk;
 const Compiler = @import("compiler.zig").Compiler;
 
-const growth_factor_gc = 2;
 const verbose_gc = false;
 const stress_gc = true;
-
-fn growCapacity(capacity: usize) usize {
-    return if (capacity < 8) 8 else capacity * 2;
-}
 
 pub const Obj = struct {
     objType: Type,
@@ -144,34 +139,21 @@ pub const Obj = struct {
         obj: Obj,
         bytes: []const u8,
 
-        pub fn create(vm: *VM, bytes: []const u8) !*String {
-            if (vm.strings.get(bytes)) |interned| {
-                vm.allocator.free(bytes);
-                return interned;
-            } else {
-                const obj = try Obj.create(vm, String, .String);
-                const out = obj.asString();
-                out.* = String{
-                    .obj = obj.*,
-                    .bytes = bytes,
-                };
-                // Make sure string is visible to the GC during allocation
-                vm.push(out.obj.value());
-                try vm.strings.putNoClobber(bytes, string);
-                _ = vm.pop();
-                return out;
-            }
-        }
-
         pub fn allocate(vm: *VM, bytes: []const u8) !*String {
-            const string = try Obj.create(vm, String, .String);
-            string.asString().bytes = bytes;
+            const obj = try Obj.create(vm, String, .String);
+            const string = obj.asString();
+            string.bytes = bytes;
 
             // Make sure string is visible to the GC during allocation
-            vm.push(string.value());
-            _ = vm.strings.put(bytes, string.asString()) catch unreachable;
+            vm.push(obj.value());
+            _ = vm.strings.put(bytes, string) catch unreachable;
             _ = vm.pop();
-            return string.asString();
+            return string;
+        }
+
+        pub fn destroy(self: *String, vm: *VM) void {
+            vm.allocator.free(self.bytes);
+            vm.allocator.destroy(self);
         }
 
         pub fn copy(vm: *VM, bytes: []const u8) !*String {
@@ -193,41 +175,25 @@ pub const Obj = struct {
 
             return allocate(vm, bytes);
         }
-
-        pub fn destroy(self: *String, vm: *VM) void {
-            vm.allocator.free(self.bytes);
-            vm.allocator.destroy(self);
-        }
     };
 
     pub const Upvalue = struct {
         obj: Obj,
         location: *Value,
         closed: Value,
-        next: ?*Obj.Upvalue,
-
-        pub fn allocate(slot: *Value, next: ?*Obj) *Obj {
-            var upvalue = Obj.create();
-            upvalue.data = Obj.Data{
-                .Upvalue = ObjUpvalue{
-                    .closed = Value.Nil,
-                    .location = slot,
-                    .next = next,
-                },
-            };
-            return upvalue;
-        }
+        next: ?*Upvalue,
 
         pub fn create(vm: *VM, location: *Value, next: ?*Upvalue) !*Upvalue {
             const obj = try Obj.create(vm, Upvalue, .Upvalue);
-            obj.asUpvalue().* = Upvalue{
+            const upvalue = obj.asUpvalue();
+            upvalue.* = Upvalue{
                 .obj = obj.*,
                 .location = location,
                 .closed = Value.nil(),
                 .next = null,
             };
 
-            return obj.asUpvalue();
+            return upvalue;
         }
 
         pub fn destroy(self: *Upvalue, vm: *VM) void {
@@ -238,22 +204,21 @@ pub const Obj = struct {
     pub const Closure = struct {
         obj: Obj,
         function: *Function,
-        upvalues: []?*Obj.Upvalue,
+        upvalues: []?*Upvalue,
 
         pub fn create(vm: *VM, function: *Function) !*Closure {
             const upvalues = try vm.allocator.alloc(?*Upvalue, function.upvalueCount);
             for (upvalues) |*upvalue| upvalue.* = null;
 
             const obj = try Obj.create(vm, Closure, .Closure);
-            const out = obj.asClosure();
-
-            out.* = Closure{
+            const closure = obj.asClosure();
+            closure.* = Closure{
                 .obj = obj.*,
                 .function = function,
                 .upvalues = upvalues,
             };
 
-            return out;
+            return closure;
         }
 
         pub fn destroy(self: *Closure, vm: *VM) void {
@@ -268,18 +233,17 @@ pub const Obj = struct {
         super: ?*Class,
         methods: std.StringHashMap(Value),
 
-        pub fn create(vm: *VM, name: *String, superclass: ?*Obj.Class) !*Class {
+        pub fn create(vm: *VM, name: *String, superclass: ?*Class) !*Class {
             const obj = try Obj.create(vm, Class, .Class);
-            const out = obj.asClass();
-
-            out.* = Class{
+            const class = obj.asClass();
+            class.* = Class{
                 .obj = obj.*,
                 .name = name,
                 .super = superclass,
                 .methods = std.StringHashMap(Value).init(vm.allocator),
             };
 
-            return out;
+            return class;
         }
 
         pub fn destroy(self: *Class, vm: *VM) void {
@@ -295,15 +259,14 @@ pub const Obj = struct {
 
         pub fn create(vm: *VM, class: *Class) !*Instance {
             const obj = try Obj.create(vm, Instance, .Instance);
-            const out = obj.asInstance();
-
-            out.* = Instance{
+            const instance = obj.asInstance();
+            instance.* = Instance{
                 .obj = obj.*,
                 .class = class,
                 .fields = std.StringHashMap(Value).init(vm.allocator),
             };
 
-            return out;
+            return instance;
         }
 
         pub fn destroy(self: *Instance, vm: *VM) void {
@@ -319,15 +282,14 @@ pub const Obj = struct {
 
         pub fn create(vm: *VM, receiver: Value, method: *Closure) !*BoundMethod {
             const obj = try Obj.create(vm, BoundMethod, .BoundMethod);
-            const out = obj.asBoundMethod();
-
-            out.* = BoundMethod{
+            const bound = obj.asBoundMethod();
+            bound.* = BoundMethod{
                 .obj = obj.*,
                 .receiver = receiver,
                 .method = method,
             };
 
-            return out;
+            return bound;
         }
 
         pub fn destroy(self: *BoundMethod, vm: *VM) void {
@@ -344,8 +306,8 @@ pub const Obj = struct {
 
         pub fn create(vm: *VM) !*Function {
             const obj = try Obj.create(vm, Function, .Function);
-            const out = obj.asFunction();
-            out.* = Function{
+            const func = obj.asFunction();
+            func.* = Function{
                 .obj = obj.*,
                 .arity = 0,
                 .upvalueCount = 0,
@@ -353,7 +315,7 @@ pub const Obj = struct {
                 .chunk = Chunk.init(),
             };
 
-            return out;
+            return func;
         }
 
         pub fn destroy(self: *Function, vm: *VM) void {
@@ -370,12 +332,12 @@ pub const Obj = struct {
 
         pub fn create(vm: *VM, function: Fn) !*Native {
             const obj = try Obj.create(vm, Native, .Native);
-            const out = obj.asNative();
-            out.* = Native{
+            const native = obj.asNative();
+            native.* = Native{
                 .obj = obj.*,
                 .function = function,
             };
-            return out;
+            return native;
         }
 
         pub fn destroy(self: *Native, vm: *VM) void {

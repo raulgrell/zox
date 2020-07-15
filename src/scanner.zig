@@ -113,14 +113,16 @@ pub const TokenType = enum {
 };
 
 pub const Scanner = struct {
-    start: []const u8 = undefined,
-    current: u32 = 0,
-    line: u32 = 0,
+    start: []const u8,
+    current: u32,
+    line: u32,
 
-    pub fn init(self: *Scanner, source: []const u8) void {
-        self.start = source;
-        self.current = 0;
-        self.line = 1;
+    pub fn create(source: []const u8) Scanner {
+        return Scanner {
+            .start = source,
+            .current = 0,
+            .line = 1,
+        };
     }
 
     pub fn scanToken(self: *Scanner) Token {
