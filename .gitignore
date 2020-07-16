@@ -5,17 +5,5 @@
 zls/
 
 # Zig artifacts
-build/
+bin/
 zig-cache/
-
-# C artifacts
-*.o
-*.a
-*.h
-
-# Windows artifacts
-*.exe
-*.pdb
-*.obj
-*.def
-*.lib

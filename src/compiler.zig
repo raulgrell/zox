@@ -10,7 +10,7 @@ const TokenType = @import("./scanner.zig").TokenType;
 const Value = @import("./value.zig").Value;
 const VM = @import("./vm.zig").VM;
 
-const verbose = true;
+const verbose = false;
 const verbose_parse = false;
 
 pub const Parser = struct {
@@ -205,12 +205,12 @@ pub const Compiler = struct {
         };
     }
 
-    pub fn init(self: *Compiler, instance: *Context) !void {
-        instance.current = self;
+    pub fn init(self: *Compiler, context: *Context) !void {
+        context.current = self;
 
         switch (self.T) {
             .Initializer, .Method, .Static, .Function => {
-                self.function.name = try Obj.String.copy(instance.vm, instance.parser.previous.lexeme);
+                self.function.name = try Obj.String.copy(context.vm, context.parser.previous.lexeme);
             },
             .Script => self.function.name = null,
         }
@@ -222,35 +222,6 @@ pub const Compiler = struct {
         local.isCaptured = false;
         local.name.lexeme = if (self.T != .Function) "this" else "";
         self.local_count += 1;
-    }
-
-    fn emitByte(self: *Compiler, context: *Context, byte: u8) void {
-        self.chunk().write(byte, context.parser.previous.line) catch unreachable;
-    }
-
-    fn emitOp(self: *Compiler, context: *Context, op: OpCode) void {
-        self.emitByte(context, @enumToInt(op));
-    }
-
-    fn emitUnaryOp(self: *Compiler, context: *Context, op: OpCode, byte: u8) void {
-        self.emitByte(context, @enumToInt(op));
-        self.emitByte(context, byte);
-    }
-
-    fn emitConstant(self: *Compiler, context: *Context, value: Value) void {
-        self.emitUnaryOp(context, .Constant, self.makeConstant(context, value));
-    }
-
-    fn makeConstant(self: *Compiler, context: *Context, value: Value) u8 {
-        //TODO: Constant limit
-        return self.addConstant(context, value);
-    }
-
-    pub fn addConstant(self: *Compiler, context: *Context, value: Value) u8 {
-        context.vm.push(value);
-        self.chunk().constants.append(value) catch unreachable;
-        _ = context.vm.pop();
-        return @intCast(u8, self.chunk().constants.items.len - 1);
     }
 
     fn chunk(self: *const Compiler) *Chunk {
@@ -314,13 +285,13 @@ pub const Context = struct {
 
         if (self.current.enclosing) |outer| {
             // Capture the upvalues in the new closure object.
-            outer.emitUnaryOp(self, .Closure, outer.makeConstant(self, func.obj.value()));
+            self.emitUnaryOp(outer, .Closure, self.makeConstant(outer, func.obj.value()));
 
             // Emit arguments for each upvalue to know whether to capture a local or an upvalue.
             var i: usize = 0;
             while (i < func.upvalueCount) : (i += 1) {
-                outer.emitByte(self, if (self.current.upvalues[i].isLocal) 1 else 0);
-                outer.emitByte(self, self.current.upvalues[i].index);
+                self.emitByte(outer, if (self.current.upvalues[i].isLocal) 1 else 0);
+                self.emitByte(outer, self.current.upvalues[i].index);
             }
         }
 
@@ -364,7 +335,7 @@ pub const Context = struct {
         if (verbose_parse) std.debug.warn("S | Print\n", .{});
         self.expression();
         self.parser.consume(.Semicolon, "Expect ';' after value.");
-        self.emitOp(.Print);
+        self.emitOp(self.current, .Print);
     }
 
     fn ifStatement(self: *Context) anyerror!void {
@@ -374,13 +345,13 @@ pub const Context = struct {
         self.parser.consume(.RightParen, "Expect ')' after condition");
 
         const thenJump = self.emitJump(OpCode.JumpIfFalse);
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
         try self.statement();
 
         const elseJump = self.emitJump(.Jump);
 
         self.patchJump(thenJump);
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
 
         if (self.parser.match(.Else)) try self.statement();
         self.patchJump(elseJump);
@@ -401,7 +372,7 @@ pub const Context = struct {
             }
             self.expression();
             self.parser.consume(.Semicolon, "Expect ';' after return value.");
-            self.emitOp(.Return);
+            self.emitOp(self.current, .Return);
         }
     }
 
@@ -431,13 +402,13 @@ pub const Context = struct {
 
         const exitJump = self.emitJump(.JumpIfFalse);
 
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
         try self.statement();
 
         self.emitLoop(@intCast(i32, self.parser.innermostLoopStart));
 
         self.patchJump(exitJump);
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
 
         self.parser.innermostLoopStart = surroundingLoopStart;
         self.parser.innermostLoopScopeDepth = surroundingLoopScopeDepth;
@@ -458,9 +429,9 @@ pub const Context = struct {
         var next_index = @intCast(u8, self.current.local_count - 1);
         while (self.current.local_count > 0 and self.current.locals[next_index].depth > self.current.scope_depth) {
             if (self.current.locals[self.current.local_count - 1].isCaptured) {
-                self.emitOp(.CloseUpvalue);
+                self.emitOp(self.current, .CloseUpvalue);
             } else {
-                self.emitOp(.Pop);
+                self.emitOp(self.current, .Pop);
             }
             self.current.local_count -= 1;
             next_index = @intCast(u8, self.current.local_count);
@@ -478,7 +449,7 @@ pub const Context = struct {
     fn expressionStatement(self: *Context) void {
         if (verbose_parse) std.debug.warn("S | Expression\n", .{});
         self.expression();
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
         self.parser.consume(.Semicolon, "Expect ';' after expression.");
     }
 
@@ -522,7 +493,7 @@ pub const Context = struct {
         const nameConstant = try self.identifierConstant(self.parser.previous);
         self.declareVariable();
 
-        self.emitUnaryOp(.Class, nameConstant);
+        self.emitUnaryOp(self.current, .Class, nameConstant);
         self.defineVariable(nameConstant);
 
         var classCompiler = ClassCompiler{
@@ -550,7 +521,7 @@ pub const Context = struct {
             self.defineVariable(0);
 
             try self.namedVariable(classCompiler.name, false);
-            self.emitOp(.Inherit);
+            self.emitOp(self.current, .Inherit);
             classCompiler.hasSuperclass = true;
         }
 
@@ -560,7 +531,7 @@ pub const Context = struct {
         while (!self.parser.check(.RightBrace) and !self.parser.check(.EOF)) try self.method();
         self.parser.consume(.RightBrace, "Expect '}' after class body.");
 
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
 
         if (classCompiler.hasSuperclass) self.endScope();
     }
@@ -586,7 +557,7 @@ pub const Context = struct {
 
         try self.function(T);
 
-        self.emitUnaryOp(.Method, constant);
+        self.emitUnaryOp(self.current, .Method, constant);
     }
 
     fn fnDeclaration(self: *Context) !void {
@@ -645,7 +616,7 @@ pub const Context = struct {
         if (self.parser.match(.Equal)) {
             self.expression();
         } else {
-            self.emitOp(.Nil);
+            self.emitOp(self.current, .Nil);
         }
         self.parser.consume(.Semicolon, "Expect ';' after variable declaration.");
         self.defineVariable(global);
@@ -686,7 +657,7 @@ pub const Context = struct {
 
     fn identifierConstant(self: *Context, name: Token) !u8 {
         const obj_string = try Obj.String.copy(self.vm, name.lexeme);
-        return self.current.makeConstant(self, obj_string.obj.value());
+        return self.makeConstant(self.current, obj_string.obj.value());
     }
 
     fn markInitialized(self: *Context) void {
@@ -700,7 +671,7 @@ pub const Context = struct {
             self.markInitialized();
             return;
         }
-        self.emitUnaryOp(.DefineGlobal, global);
+        self.emitUnaryOp(self.current, .DefineGlobal, global);
     }
 
     fn addLocal(self: *Context, name: Token) void {
@@ -810,8 +781,8 @@ pub const Context = struct {
 
     fn call(self: *Context, canAssign: bool) void {
         const arg_count = self.argumentList();
-        self.emitOp(.Call);
-        self.emitByte(arg_count);
+        self.emitOp(self.current, .Call);
+        self.emitByte(self.current, arg_count);
     }
 
     fn dot(self: *Context, canAssign: bool) void {
@@ -819,13 +790,13 @@ pub const Context = struct {
         const name = self.identifierConstant(self.parser.previous) catch unreachable;
         if (canAssign and self.parser.match(.Equal)) {
             self.expression();
-            self.emitUnaryOp(.SetProperty, name);
+            self.emitUnaryOp(self.current, .SetProperty, name);
         } else if (self.parser.match(.LeftParen)) {
             const argCount = self.argumentList();
-            self.emitUnaryOp(.Invoke, name);
-            self.emitByte(argCount);
+            self.emitUnaryOp(self.current, .Invoke, name);
+            self.emitByte(self.current, argCount);
         } else {
-            self.emitUnaryOp(.GetProperty, name);
+            self.emitUnaryOp(self.current, .GetProperty, name);
         }
     }
 
@@ -849,7 +820,7 @@ pub const Context = struct {
 
     fn number(self: *Context, canAssign: bool) void {
         const value = std.fmt.parseUnsigned(u8, self.parser.previous.lexeme, 10) catch unreachable;
-        self.current.emitConstant(self, Value{ .Number = @intToFloat(f64, value) });
+        self.emitConstant(self.current, Value{ .Number = @intToFloat(f64, value) });
     }
 
     fn unary(self: *Context, canAssign: bool) void {
@@ -860,8 +831,8 @@ pub const Context = struct {
 
         // Emit the operator instruction.
         switch (operator_type) {
-            .Bang => self.emitOp(.Not),
-            .Minus => self.emitOp(.Negate),
+            .Bang => self.emitOp(self.current, .Not),
+            .Minus => self.emitOp(self.current, .Negate),
             else => unreachable,
         }
     }
@@ -877,33 +848,33 @@ pub const Context = struct {
         // Emit the operator instruction.
         switch (operator_type) {
             .BangEqual => {
-                self.emitOp(OpCode.Equal);
-                self.emitOp(OpCode.Not);
+                self.emitOp(self.current, .Equal);
+                self.emitOp(self.current, .Not);
             },
-            .EqualEqual => self.emitOp(.Equal),
-            .Greater => self.emitOp(.Greater),
+            .EqualEqual => self.emitOp(self.current, .Equal),
+            .Greater => self.emitOp(self.current, .Greater),
             .GreaterEqual => {
-                self.emitOp(OpCode.Less);
-                self.emitOp(OpCode.Not);
+                self.emitOp(self.current, .Less);
+                self.emitOp(self.current, .Not);
             },
-            .Less => self.emitOp(.Less),
+            .Less => self.emitOp(self.current, .Less),
             .LessEqual => {
-                self.emitOp(OpCode.Greater);
-                self.emitOp(OpCode.Not);
+                self.emitOp(self.current, .Greater);
+                self.emitOp(self.current, .Not);
             },
-            .Plus => self.emitOp(.Add),
-            .Minus => self.emitOp(.Subtract),
-            .Star => self.emitOp(.Multiply),
-            .Slash => self.emitOp(.Divide),
+            .Plus => self.emitOp(self.current, .Add),
+            .Minus => self.emitOp(self.current, .Subtract),
+            .Star => self.emitOp(self.current, .Multiply),
+            .Slash => self.emitOp(self.current, .Divide),
             else => unreachable,
         }
     }
 
     fn literal(self: *Context, canAssign: bool) void {
         switch (self.parser.previous.token_type) {
-            .False => self.emitOp(.False),
-            .Nil => self.emitOp(.Nil),
-            .True => self.emitOp(.True),
+            .False => self.emitOp(self.current, .False),
+            .Nil => self.emitOp(self.current, .Nil),
+            .True => self.emitOp(self.current, .True),
             else => unreachable,
         }
     }
@@ -930,11 +901,11 @@ pub const Context = struct {
         if (self.parser.match(.LeftParen)) {
             const argCount = self.argumentList();
             self.namedVariable(Token.symbol("super"), false) catch unreachable;
-            self.emitUnaryOp(.SuperInvoke, name);
-            self.emitByte(argCount);
+            self.emitUnaryOp(self.current, .SuperInvoke, name);
+            self.emitByte(self.current, argCount);
         } else {
             self.namedVariable(Token.symbol("super"), false) catch unreachable;
-            self.emitUnaryOp(.GetSuper, name);
+            self.emitUnaryOp(self.current, .GetSuper, name);
         }
     }
 
@@ -963,16 +934,16 @@ pub const Context = struct {
 
         if (canAssign and self.parser.match(.Equal)) {
             self.expression();
-            self.emitUnaryOp(setOp, arg);
+            self.emitUnaryOp(self.current, setOp, arg);
         } else {
-            self.emitUnaryOp(getOp, arg);
+            self.emitUnaryOp(self.current, getOp, arg);
         }
     }
 
     fn string(self: *Context, canAssign: bool) void {
         const lexeme = self.parser.previous.lexeme;
         const str = Obj.String.copy(self.vm, lexeme[0..]) catch unreachable;
-        self.current.emitConstant(self, str.obj.value());
+        self.emitConstant(self.current, str.obj.value());
     }
 
     fn orFn(self: *Context, canAssign: bool) void {
@@ -980,7 +951,7 @@ pub const Context = struct {
         const endJump = self.emitJump(.Jump);
 
         self.patchJump(elseJump);
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
 
         self.parsePrecedence(.Or);
         self.patchJump(endJump);
@@ -989,52 +960,68 @@ pub const Context = struct {
     fn andFn(self: *Context, canAssign: bool) void {
         const endJump = self.emitJump(.JumpIfFalse);
 
-        self.emitOp(.Pop);
+        self.emitOp(self.current, .Pop);
         self.parsePrecedence(.And);
 
         self.patchJump(endJump);
     }
 
     fn emitJump(self: *Context, op: OpCode) usize {
-        self.emitOp(op);
-        self.emitByte('\xFF');
-        self.emitByte('\xFF');
+        self.emitOp(self.current, op);
+        self.emitByte(self.current, '\xFF');
+        self.emitByte(self.current, '\xFF');
 
         return self.current.chunk().code.items.len - 2;
     }
 
     fn emitLoop(self: *Context, loopStart: i32) void {
-        self.emitOp(.Loop);
+        self.emitOp(self.current, .Loop);
         const count = @intCast(i32, self.current.chunk().code.items.len);
         const offset = @intCast(u16, count - loopStart + 2);
         if (offset > std.math.maxInt(u16)) self.parser.errorAtPrevious("Loop body too large.");
 
-        self.emitByte(@truncate(u8, (offset >> 8) & 0xff));
-        self.emitByte(@truncate(u8, offset & 0xff));
+        self.emitByte(self.current, @truncate(u8, (offset >> 8) & 0xff));
+        self.emitByte(self.current, @truncate(u8, offset & 0xff));
     }
 
     fn emitReturn(self: *Context) void {
         if (self.current.T == .Initializer) {
             // An initializer automatically returns "this".
-            self.emitOp(.GetLocal);
-            self.emitByte(0);
+            self.emitOp(self.current, .GetLocal);
+            self.emitByte(self.current, 0);
         } else {
-            self.emitOp(.Nil);
+            self.emitOp(self.current, .Nil);
         }
 
-        self.emitOp(.Return);
+        self.emitOp(self.current, .Return);
     }
 
-    fn emitByte(self: *Context, byte: u8) void {
-        self.current.chunk().write(byte, self.parser.previous.line) catch unreachable;
+    fn emitByte(self: *Context, compiler: *Compiler, byte: u8) void {
+        compiler.chunk().write(byte, self.parser.previous.line) catch unreachable;
     }
 
-    fn emitOp(self: *Context, op: OpCode) void {
-        self.emitByte(@enumToInt(op));
+    fn emitOp(self: *Context, compiler: *Compiler, op: OpCode) void {
+        self.emitByte(compiler, @enumToInt(op));
     }
 
-    fn emitUnaryOp(self: *Context, op: OpCode, byte: u8) void {
-        self.emitByte(@enumToInt(op));
-        self.emitByte(byte);
+    fn emitUnaryOp(self: *Context, compiler: *Compiler, op: OpCode, byte: u8) void {
+        self.emitByte(compiler, @enumToInt(op));
+        self.emitByte(compiler, byte);
+    }
+
+    fn emitConstant(self: *Context, compiler: *Compiler, value: Value) void {
+        self.emitUnaryOp(compiler, .Constant, self.makeConstant(compiler, value));
+    }
+
+    fn makeConstant(self: *Context, compiler: *Compiler, value: Value) u8 {
+        //TODO: Constant limit
+        return self.addConstant(compiler, value);
+    }
+
+    pub fn addConstant(self: *Context, compiler: *Compiler, value: Value) u8 {
+        self.vm.push(value);
+        compiler.chunk().constants.append(value) catch unreachable;
+        _ = self.vm.pop();
+        return @intCast(u8, compiler.chunk().constants.items.len - 1);
     }
 };

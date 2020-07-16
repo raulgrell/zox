@@ -65,7 +65,7 @@ fn runFile(path: []const u8) !void {
 
     std.debug.warn("Opening: {}\n", .{path});
 
-    const source = try std.fs.cwd().readFileAlloc(allocator, path, 1 * 1024 * 1024);
+    const source = try std.fs.cwd().readFileAlloc(allocator, path, 1 * 1024);
     defer allocator.free(source);
 
     vm.interpret(source) catch |err| switch (err) {

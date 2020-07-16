@@ -84,13 +84,6 @@ pub const Chunk = struct {
         return self.code.items.ptr;
     }
 
-    pub fn addConstant(self: *Chunk, value: Value) u8 {
-        vm.push(value);
-        self.constants.append(value) catch unreachable;
-        _ = vm.pop();
-        return @intCast(u8, self.constants.items.len - 1);
-    }
-
     pub fn write(self: *Chunk, byte: u8, line: usize) !void {
         try self.code.append(byte);
 

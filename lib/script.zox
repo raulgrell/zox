@@ -1,0 +1,48 @@
+class Vec3 { 
+    fn str() { 
+        print "hello"; 
+    } 
+} 
+
+var vv = Vec3(); vv.str();
+
+fn fib(n) {
+    if (n < 2) return n;
+    return fib(n - 2) + fib(n - 1);
+}
+
+var k = clock();
+print fib(30);
+var t = clock() - k;
+
+fn go(value) {
+    fn gg() {
+        print value;
+    }
+    return gg;
+}
+
+var p = go("dude");
+p();
+
+class F { 
+    fn cook() { 
+        print "Dunk"; 
+        this.end("sprinkles"); 
+    } 
+    
+    fn end(thing) { 
+        print "Add " + thing; 
+    } 
+}
+
+var ff = F(); ff.cook();
+
+class D < F {
+    fn end(thing) {
+        super.end("icing");
+    }
+}
+
+var dd = D(); dd.cook();
+
