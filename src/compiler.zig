@@ -10,7 +10,7 @@ const TokenType = @import("./scanner.zig").TokenType;
 const Value = @import("./value.zig").Value;
 const VM = @import("./vm.zig").VM;
 
-const verbose = false;
+const verbose = true;
 const verbose_parse = false;
 
 pub const Parser = struct {
@@ -115,7 +115,7 @@ pub const Precedence = packed enum(u8) {
 };
 
 fn makeRule(comptime prefix: ?ParseFn, comptime infix: ?ParseFn, comptime precedence: Precedence) ParseRule {
-    return comptime ParseRule{
+    return ParseRule{
         .prefix = prefix,
         .infix = infix,
         .precedence = precedence,
@@ -126,6 +126,8 @@ fn getRule(token: TokenType) ParseRule {
     return switch (token) {
         .LeftParen => makeRule(Context.grouping, Context.call, .Call),
         .RightParen => makeRule(null, null, .None),
+        .LeftBracket => makeRule(Context.list, Context.subscript, .Call),
+        .RightBracket => makeRule(null, null, .None),
         .LeftBrace => makeRule(null, null, .None),
         .RightBrace => makeRule(null, null, .None),
         .Comma => makeRule(null, null, .None),
@@ -252,6 +254,12 @@ pub const Context = struct {
     current: *Compiler = undefined,
     currentClass: ?*ClassCompiler = null,
 
+    const Error = error {
+        CompileError,
+        RuntimeError,
+        OutOfMemory
+    };
+
     pub fn compile(self: *Context, vm: *VM, source: []const u8) !*Obj.Function {
         var compiler = try Compiler.create(vm, null, 0, .Script);
         try compiler.init(self);
@@ -274,7 +282,7 @@ pub const Context = struct {
         self.emitReturn();
 
         if (self.parser.had_error)
-            return error.ParseError;
+            return error.CompileError;
 
         const func = self.current.function;
 
@@ -300,7 +308,7 @@ pub const Context = struct {
         return func;
     }
 
-    fn statement(self: *Context) !void {
+    fn statement(self: *Context) Error!void {
         if (self.parser.match(.Print)) {
             self.printStatement();
         } else if (self.parser.match(.If)) {
@@ -338,7 +346,7 @@ pub const Context = struct {
         self.emitOp(self.current, .Print);
     }
 
-    fn ifStatement(self: *Context) anyerror!void {
+    fn ifStatement(self: *Context) Error!void {
         if (verbose_parse) std.debug.warn("S | If\n", .{});
         self.parser.consume(.LeftParen, "Expect '(' after if.");
         self.expression();
@@ -385,7 +393,7 @@ pub const Context = struct {
         self.current.chunk().code.items[offset + 1] = @truncate(u8, jump & 0xff);
     }
 
-    fn whileStatement(self: *Context) anyerror!void {
+    fn whileStatement(self: *Context) !void {
         if (verbose_parse)
             std.debug.warn("S | While\n", .{});
 
@@ -438,7 +446,7 @@ pub const Context = struct {
         }
     }
 
-    fn block(self: *Context) anyerror!void {
+    fn block(self: *Context) !void {
         while (!(self.parser.check(.RightBrace) or self.parser.check(.EOF))) {
             try self.declaration();
         }
@@ -453,7 +461,7 @@ pub const Context = struct {
         self.parser.consume(.Semicolon, "Expect ';' after expression.");
     }
 
-    fn declaration(self: *Context) !void {
+    fn declaration(self: *Context) Error!void {
         if (self.parser.match(.Class)) {
             try self.classDeclaration();
         } else if (self.parser.match(.Fn)) {
@@ -486,7 +494,7 @@ pub const Context = struct {
         }
     }
 
-    fn classDeclaration(self: *Context) !void {
+    fn classDeclaration(self: *Context) Error!void {
         if (verbose_parse) std.debug.warn("S | Class\n", .{});
         self.parser.consume(.Identifier, "Expect class name.");
 
@@ -560,7 +568,7 @@ pub const Context = struct {
         self.emitUnaryOp(self.current, .Method, constant);
     }
 
-    fn fnDeclaration(self: *Context) !void {
+    fn fnDeclaration(self: *Context) Error!void {
         if (verbose_parse) std.debug.warn("S | Function\n", .{});
         const global = try self.parseVariable("Expect function name.");
         self.markInitialized(); // should this be here?
@@ -655,7 +663,7 @@ pub const Context = struct {
         return std.mem.eql(u8, a.lexeme, b.lexeme);
     }
 
-    fn identifierConstant(self: *Context, name: Token) !u8 {
+    fn identifierConstant(self: *Context, name: Token) Error!u8 {
         const obj_string = try Obj.String.copy(self.vm, name.lexeme);
         return self.makeConstant(self.current, obj_string.obj.value());
     }
@@ -820,7 +828,7 @@ pub const Context = struct {
 
     fn number(self: *Context, canAssign: bool) void {
         const value = std.fmt.parseUnsigned(u8, self.parser.previous.lexeme, 10) catch unreachable;
-        self.emitConstant(self.current, Value{ .Number = @intToFloat(f64, value) });
+        self.emitConstant(self.current, Value.fromNumber(@intToFloat(f64, value) ));
     }
 
     fn unary(self: *Context, canAssign: bool) void {
@@ -876,6 +884,29 @@ pub const Context = struct {
             .Nil => self.emitOp(self.current, .Nil),
             .True => self.emitOp(self.current, .True),
             else => unreachable,
+        }
+    }
+
+    fn list(self: *Context, canAssign: bool) void {
+        self.emitOp(self.current, .NewList);
+        while (true) {
+            if(self.parser.check(.RightBracket)) break;
+            self.expression();
+            self.emitOp(self.current, .AddList);
+            if (!self.parser.match(.Comma)) break;
+        }
+        
+        self.parser.consume(.RightBracket, "Expected closing ']'");
+    }
+
+    fn subscript(self: *Context, canAssign: bool) void {
+        self.expression();
+        self.parser.consume(.RightBracket, "Expected closing ']'");
+        if (self.parser.match(.Equal)) {
+            self.expression();
+            self.emitOp(self.current, .SubscriptAssign);
+        } else {
+            self.emitOp(self.current, .Subscript);
         }
     }
 

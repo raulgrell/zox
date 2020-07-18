@@ -1,3 +1,12 @@
+# Plans
+
+## Planned Features
+Lists
+Maps
+Embedding API
+
+
+# Exercises
 
 Because OP_CONSTANT only uses a single byte for its operand, a chunk may only contain up to 256 different constants. That’s small enough that people writing real-world code will hit that limit. We could use two or more bytes to store the operand, but that makes every constant instruction take up more space. Most chunks won’t need that many unique constants, so that wastes space and sacrifices some locality in the common case to support the rare case.
 
@@ -15,86 +24,16 @@ Defining two instructions seems to be the best of both worlds. What sacrifices, 
 
 
 
-    What bytecode instruction sequences would you generate for the following expressions:
+Our VM’s stack has a fixed size, and we don’t check if pushing a value overflows it. This means the wrong series of instructions could cause our interpreter to crash or go into undefined behavior. Avoid that by dynamically growing the stack as needed.
 
-    1 * 2 + 3
-    1 + 2 * 3
-    3 - 2 - 1
-    1 + 2 * 3 - 4 / -5
-
-    (Remember that Lox does not have a syntax for negative number literals, so the -5 is negating the number 5.)
-
-    If we really wanted a minimal instruction set, we could eliminate either OP_NEGATE or OP_SUBTRACT. Show the bytecode instruction sequence you would generate for:
-
-    4 - 3 * -2
-
-    First, without using OP_NEGATE. Then, without using OP_SUBTRACT.
-
-    Given the above, do you think it makes sense to have both instructions? Why or why not? Are there any other redundant instructions you would consider including?
-
-    Our VM’s stack has a fixed size, and we don’t check if pushing a value overflows it. This means the wrong series of instructions could cause our interpreter to crash or go into undefined behavior. Avoid that by dynamically growing the stack as needed.
-
-    What are the costs and benefits of doing so?
-
-    To interpret OP_NEGATE, we pop the operand, negate the value, and then push the result. That’s a simple implementation, but it increments and decrements ip unnecessarily, since the stack ends up the same height in the end. It might be faster to simply negate the value in place on the stack and leave ip alone. Try that and see if you can measure a performance difference.
-
-    Are there other instructions where you can do a similar optimization?
+What are the costs and benefits of doing so?
 
 
 
 
-    Many newer languages support string interpolation. Inside a string literal, you have some sort of special delimiters—most commonly ${ at the beginning and } at the end. Between those delimiters, any expression can appear. When the string literal is executed, the inner expression is evaluated, converted to a string, and then merged with the surrounding string literal.
+To interpret OP_NEGATE, we pop the operand, negate the value, and then push the result. That’s a simple implementation, but it increments and decrements ip unnecessarily, since the stack ends up the same height in the end. It might be faster to simply negate the value in place on the stack and leave ip alone. Try that and see if you can measure a performance difference.
 
-    For example, if Lox supported string interpolation, then this:
-
-    var drink = "Tea";
-    var steep = 4;
-    var cool = 2;
-    print "${drink} will be ready in ${steep + cool} minutes.";
-
-    Would print:
-
-    Tea will be ready in 6 minutes.
-
-    What token types would you define to implement a scanner for string interpolation? What sequence of tokens would you emit for the above string literal?
-
-    What tokens would you emit for:
-
-    "Nested ${"interpolation?! Are you ${"mad?!"}"}"
-
-    Consider looking at other language implementations that support interpolation to see how they handle it.
-
-    Several languages use angle brackets for generics and also have a >> right shift operator. This led to a classic problem in early versions of C++:
-
-    vector<vector<string>> nestedVectors;
-
-    This would produce a compile error because the >> was lexed to a single right shift token, not two > tokens. Users were forced to avoid this by putting a space between the closing angle brackets.
-
-    Later versions of C++ are smarter and can handle the above code. Java and C# never had the problem. How do those languages specify and implement this?
-
-    Many languages, especially later in their evolution, define “contextual keywords”. These are identifiers that act like reserved words in some contexts but can be normal user-defined identifiers in others.
-
-    For example, await is a keyword inside an async method in C#, but in other methods, you can use await as your own identifier.
-
-    Name a few contextual keywords from other languages, and the context where they are meaningful. What are the pros and cons of having contextual keywords? How would you implement them in your language’s front end if you needed to?
-
-
-
-
-    To really understand the parser, you need to see how execution threads through the interesting parsing functions—parsePrecedence() and the parser functions stored in the table. Take this (strange) expression:
-
-    (-1 + 2) * 3 - -4
-
-    Write a trace of how those functions are called. Show the order they are called, which calls which, and the arguments passed to them.
-
-    The ParseRule row for TOKEN_MINUS has both prefix and infix function pointers. That’s because - is both a prefix operator (unary negation) and an infix one (subtraction).
-
-    In the full Lox language, what other tokens can be used in both prefix and infix positions? What about in C or another language of your choice?
-
-    You might be wondering about more complex “mixfix” expressions that have more than two operands separated by tokens. C’s conditional or “ternary” operator, ? : is a widely-known one.
-
-    Add support for that operator to the compiler. You don’t have to generate any bytecode, just show how you would hook it up to the parser and handle the operands.
-
+Are there other instructions where you can do a similar optimization?
 
 
 
@@ -124,7 +63,7 @@ Defining two instructions seems to be the best of both worlds. What sacrifices, 
 
     Add support for keys of the other primitive types: numbers, Booleans, and nil. Later, clox will support user-defined classes. If we want to support keys that are instances of those classes, what kind of complexity does that add?
 
-    Hash tables have a lot of knobs you can tweak that affect their performance. You decide whether to use separate chaining or open addressing. Depending on which fork in that road you take, you can tune how many entries are stored in each node, or the probing strategy you use. You control the hash function, load factor, and growth rate.
+    Hash t>qables have a lot of knobs you can tweak that affect their performance. You decide whether to use separate chaining or open addressing. Depending on which fork in that road you take, you can tune how many entries are stored in each node, or the probing strategy you use. You control the hash function, load factor, and growth rate.
 
     All of this variety wasn’t created just to give CS doctoral candidates something to publish theses on: each has its uses in the many varied domains and hardware scenarios where hashing comes into play. Look up a few hash table implementations in different open source systems, research the choices they made, and try to figure out why they did things that way.
 
@@ -229,16 +168,6 @@ Defining two instructions seems to be the best of both worlds. What sacrifices, 
 
     Change clox to only wrap functions in ObjClosures that need upvalues. How does the code complexity and performance compare to always wrapping functions? Take care to benchmark programs that do and do not use closures. How should you weight the importance of each benchmark? If one gets slower and one faster, how do you decide what trade-off to make to choose an implementation strategy?
 
-    Read the design note below. I’ll wait. Now, how do you think Lox should behave? Change the implementation to create a new variable for each loop iteration.
-
-    A famous koan teaches us that “objects are a poor man’s closure” (and vice versa). Our VM doesn’t support objects yet, but now that we have closures we can approximate them. Using closures, write a Lox program that expresses two-dimensional vector “objects”. It should:
-
-        Define a “constructor” function to create a new vector with the given x and y coordinates.
-
-        Provide “methods” to access the x and y coordinates of values returned from that constructor.
-
-        Define an addition “method” that adds two vectors and produces a third.
-
 
 
     The Obj header struct at the top of each object now has three fields: type, isMarked, and next. How much memory do those take up (on your machine)? Can you come up with something more compact? Is there a runtime cost to doing so?
@@ -293,24 +222,6 @@ If Lox was your language, how would you address this, if at all? If you would ch
 Our copy-down inheritance optimization is only valid because Lox does not permit you to modify a class’s methods after its declaration. This means we don’t have to worry about the copied methods in the subclass getting out of sync with later changes to the superclass.
 
 Other languages like Ruby do allow classes to be modified after the fact. How do implementations of languages like that support class modification while keeping method resolution efficient?
-
-
-
-In the jlox chapter on inheritance, we had a challenge to implement the BETA language’s approach to method overriding. Solve the challenge again, but this time in clox. Here’s the description of the previous challenge:
-
-In Lox, as in most other object-oriented languages, when looking up a method, we start at the bottom of the class hierarchy and work our way up—a subclass’s method is preferred over a superclass’s. In order to get to the superclass method from within an overriding method, you use super.
-
-The language BETA takes the opposite approach. When you call a method, it starts at the top of the class hierarchy and works down. A superclass method wins over a subclass method. In order to get to the subclass method, the superclass method can call inner, which is sort of like the inverse of super. It chains to the next method down the hierarchy.
-
-The superclass method controls when and where the subclass is allowed to refine its behavior. If the superclass method doesn’t call inner at all, then the subclass has no way of overriding or modifying the superclass’s behavior.
-
-Take out Lox’s current overriding and super behavior and replace it with BETA’s semantics. In short:
-
-    When calling a method on a class, prefer the method highest on the class’s inheritance chain.
-
-    Inside the body of a method, a call to inner looks for a method with the same name in the nearest subclass along the inheritance chain between the class containing the inner and the class of this. If there is no matching method, the inner call does nothing.
-
-
 
 
 

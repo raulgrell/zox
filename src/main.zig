@@ -48,11 +48,11 @@ fn repl() !void {
     while (true) {
         try stdout.print("> ", .{});
         const source = try stdin.readUntilDelimiterAlloc(allocator, '\n', 255);
+        defer allocator.free(source);
         vm.interpret(source) catch |err| switch (err) {
             error.CompileError, error.RuntimeError => {},
             else => return err,
         };
-        allocator.free(source);
     }
 }
 

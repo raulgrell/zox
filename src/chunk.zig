@@ -36,6 +36,10 @@ pub const OpCode = enum(u8) {
     DefineGlobal,
     GetGlobal,
     SetGlobal,
+    NewList,
+    AddList,
+    Subscript,
+    SubscriptAssign,
     JumpIfFalse,
     Jump,
     Call,
@@ -158,14 +162,18 @@ pub const Chunk = struct {
             .Call => return byteInstruction("Call", chunk, offset),
             .Class => return simpleInstruction("Class", offset),
             .Inherit => return simpleInstruction("Inherit", offset),
+            .NewList => return simpleInstruction("NewList", offset),
+            .AddList => return simpleInstruction("AddList", offset),
+            .Subscript => return simpleInstruction("Subscript", offset),
+            .SubscriptAssign => return simpleInstruction("SubscriptAssign", offset),
             // .Subclass => return constantInstruction("Subclass", chunk, offset),
             .Method => return constantInstruction("Method", chunk, offset),
             .Invoke => return invokeInstruction("Invoke", chunk, offset),
             .SuperInvoke => return invokeInstruction("SuperInvoke", chunk, offset),
             .Closure => {
                 const constant = chunk.code.items[offset + 1];
-                std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.items[constant].toString() });
-                const function = chunk.constants.items[constant].Obj.asFunction();
+                std.debug.warn("Closure {}: {}\n", .{ constant, chunk.constants.items[constant] });
+                const function = chunk.constants.items[constant].asObj().asFunction();
                 var i: usize = 0;
                 while (i < function.upvalueCount) : (i += 1) {
                     const isLocal = chunk.code.items[offset + 2 + i] != 0;
@@ -190,7 +198,7 @@ pub const Chunk = struct {
             name,
             argCount,
             constant,
-            chunk.constants.items[constant].toString(),
+            chunk.constants.items[constant],
         });
         return offset + 3;
     }
@@ -220,7 +228,7 @@ pub const Chunk = struct {
         std.debug.warn("{} {}: {}\n", .{
             name,
             constant,
-            chunk.constants.items[constant].toString(),
+            chunk.constants.items[constant],
         });
         return offset + 2;
     }

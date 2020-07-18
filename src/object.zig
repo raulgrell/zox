@@ -22,6 +22,7 @@ pub const Obj = struct {
         Function,
         BoundMethod,
         Native,
+        List,
         String,
         Upvalue,
     };
@@ -50,6 +51,7 @@ pub const Obj = struct {
 
         switch (self.objType) {
             .String => self.asString().destroy(vm),
+            .List => self.asList().destroy(vm),
             .Function => self.asFunction().destroy(vm),
             .Native => self.asNative().destroy(vm),
             .Closure => self.asClosure().destroy(vm),
@@ -66,6 +68,10 @@ pub const Obj = struct {
 
     pub fn asString(self: *Obj) *String {
         return @fieldParentPtr(String, "obj", self);
+    }
+
+    pub fn asList(self: *Obj) *List {
+        return @fieldParentPtr(List, "obj", self);
     }
 
     pub fn asFunction(self: *Obj) *Function {
@@ -97,7 +103,7 @@ pub const Obj = struct {
     }
 
     pub fn value(self: *Obj) Value {
-        return Value{ .Obj = self };
+        return Value.fromObj(self);
     }
 
     pub fn toString(self: *Obj) []const u8 {
@@ -341,6 +347,26 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *Native, vm: *VM) void {
+            vm.allocator.destroy(self);
+        }
+    };
+
+    pub const List = struct {
+        obj: Obj,
+        items: std.ArrayList(Value),
+
+
+        pub fn create(vm: *VM) !*List {
+            const obj = try Obj.create(vm, List, .List);
+            const list = obj.asList();
+            list.* = List{
+                .obj = obj.*,
+                .items =  std.ArrayList(Value).init(allocator),
+            };
+            return list;
+        }
+
+        pub fn destroy(self: *List, vm: *VM) void {
             vm.allocator.destroy(self);
         }
     };

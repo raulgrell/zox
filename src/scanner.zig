@@ -62,6 +62,8 @@ pub const TokenType = enum {
     // Punctuation
     LeftParen,
     RightParen,
+    LeftBracket,
+    RightBracket,
     LeftBrace,
     RightBrace,
     Comma,
@@ -136,6 +138,8 @@ pub const Scanner = struct {
         switch (c) {
             '(' => return self.makeToken(.LeftParen),
             ')' => return self.makeToken(.RightParen),
+            '[' => return self.makeToken(.LeftBracket),
+            ']' => return self.makeToken(.RightBracket),
             '{' => return self.makeToken(.LeftBrace),
             '}' => return self.makeToken(.RightBrace),
             ',' => return self.makeToken(.Comma),

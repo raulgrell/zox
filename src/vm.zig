@@ -12,7 +12,6 @@ const Value = @import("./value.zig").Value;
 const ValueType = @import("./value.zig").ValueType;
 
 const Context = @import("./compiler.zig").Context;
-
 const Obj = @import("./object.zig").Obj;
 
 const verbose = false;
@@ -41,7 +40,7 @@ pub const CallFrame = struct {
 
     pub fn readString(frame: *CallFrame) *Obj.String {
         const chunk = &frame.closure.function.chunk;
-        return chunk.constants.items[frame.readByte()].Obj.asString();
+        return chunk.constants.items[frame.readByte()].asObj().asString();
     }
 };
 
@@ -181,40 +180,39 @@ pub const VM = struct {
     }
 
     fn callValue(self: *VM, callee: Value, arg_count: u8) !void {
-        switch (callee) {
-            .Obj => |o| switch (o.objType) {
-                .Class => {
-                    var c = o.asClass();
-                    var instance = try Obj.Instance.create(self, c);
-                    self.stack.items[self.stack.items.len - arg_count - 1] = instance.obj.value();
-                    if (c.methods.get(self.initString.?.bytes)) |init| {
-                        return self.call(init.Obj.asClosure(), arg_count);
-                    } else if (arg_count != 0) {
-                        return self.runtimeError("Can only call functions and classes.", .{});
-                    }
-                    return;
-                },
-                .BoundMethod => {
-                    var m = o.asBoundMethod();
-                    self.stack.items[self.stack.items.len - arg_count - 1] = m.receiver;
-                    return self.call(o.asClosure(), arg_count);
-                },
-                .Closure => {
-                    return self.call(o.asClosure(), arg_count);
-                },
-                .Native => {
-                    const n = o.asNative();
-                    const result = n.function(self.tail(arg_count));
-                    self.stack.items.len -= arg_count;
-                    self.push(result);
-                    return;
-                },
-                .Instance, .String, .Upvalue, .Function => {},
+        if (!callee.isObj()) return self.runtimeError("Can only call functions and classes.", .{});
+        const o = callee.asObj();
+        switch (o.objType) {
+            .Class => {
+                var c = o.asClass();
+                var instance = try Obj.Instance.create(self, c);
+                self.stack.items[self.stack.items.len - arg_count - 1] = instance.obj.value();
+                if (c.methods.get(self.initString.?.bytes)) |init| {
+                    return self.call(init.asObj().asClosure(), arg_count);
+                } else if (arg_count != 0) {
+                    return self.runtimeError("Expected 0 arguments but got {}.", .{arg_count});
+                }
+                return;
             },
-            .Bool, .Number, .Nil => {},
+            .BoundMethod => {
+                var m = o.asBoundMethod();
+                self.stack.items[self.stack.items.len - arg_count - 1] = m.receiver;
+                return self.call(o.asClosure(), arg_count);
+            },
+            .Closure => {
+                return self.call(o.asClosure(), arg_count);
+            },
+            .Native => {
+                const n = o.asNative();
+                const result = n.function(self.tail(arg_count));
+                self.stack.items.len -= arg_count;
+                self.push(result);
+                return;
+            },
+            .Instance, .String, .Upvalue, .Function, .List => {
+                return self.runtimeError("Can only call functions and classes.", .{});
+            },
         }
-
-        return self.runtimeError("Can only call functions and classes.", .{});
     }
 
     fn invokeFromClass(self: *VM, class: *Obj.Class, name: *Obj.String, arg_count: u8) !void {
@@ -225,11 +223,11 @@ pub const VM = struct {
             });
         };
 
-        return self.call(method.Obj.asClosure(), arg_count);
+        return self.call(method.asObj().asClosure(), arg_count);
     }
 
     fn invoke(self: *VM, name: *Obj.String, arg_count: u8) !void {
-        const receiver = self.peek(arg_count).Obj;
+        const receiver = self.peek(arg_count).asObj();
 
         if (receiver.objType != .Instance) {
             return self.runtimeError("Only instances have methods.", .{});
@@ -251,7 +249,7 @@ pub const VM = struct {
             });
         };
 
-        const bound = try Obj.BoundMethod.create(self, class.obj.value(), method.Obj.asClosure());
+        const bound = try Obj.BoundMethod.create(self, class.obj.value(), method.asObj().asClosure());
         _ = self.pop();
         self.push(bound.obj.value());
     }
@@ -324,14 +322,14 @@ pub const VM = struct {
         const native = try Obj.Native.create(self, function);
         self.push(string.obj.value());
         self.push(native.obj.value());
-        _ = self.globals.put(self.peek(1).Obj.asString().bytes, self.peek(0)) catch unreachable;
+        _ = self.globals.put(self.peek(1).asObj().asString().bytes, self.peek(0)) catch unreachable;
         _ = self.pop();
         _ = self.pop();
     }
 
     fn defineMethod(self: *VM, name: *Obj.String) !void {
         const method = self.peek(0);
-        var class = self.peek(1).Obj.asClass();
+        var class = self.peek(1).asObj().asClass();
         _ = try class.methods.put(name.bytes, method);
         _ = self.pop();
     }
@@ -360,9 +358,9 @@ pub const VM = struct {
                     const constant = frame.readConstant();
                     self.push(constant);
                 },
-                .Nil => self.push(Value.Nil),
-                .True => self.push(Value{ .Bool = true }),
-                .False => self.push(Value{ .Bool = false }),
+                .Nil => self.push(Value.nil()),
+                .True => self.push(Value.fromBool(true)),
+                .False => self.push(Value.fromBool(false)),
                 .Pop => _ = self.pop(),
                 .GetLocal => {
                     const slot = frame.readByte();
@@ -405,55 +403,102 @@ pub const VM = struct {
                 .GetSuper => {
                     const name = frame.readString();
                     const superclass = self.pop();
-                    try self.bindMethod(superclass.Obj.asClass(), name);
+                    try self.bindMethod(superclass.asObj().asClass(), name);
                 },
                 .Equal => {
                     const b = self.pop();
                     const a = self.pop();
-                    self.push(Value{ .Bool = a.equals(b) });
+                    self.push(Value.fromBool(a.equals(b)));
                 },
                 .Add => {
                     const a = self.peek(0);
                     const b = self.peek(1);
-                    switch (a) {
-                        .Obj => |o| {
-                            switch (o.objType) {
-                                .String => try self.concatenate(),
-                                else => unreachable,
-                            }
-                        },
-                        .Number => {
-                            try self.binary(Value.Number, instruction);
-                        },
-                        else => unreachable,
+
+                    if (a.isObj() and b.isObj()) {
+                        try self.concatenate();
+                    } else if (a.isNumber() and b.isNumber()) {
+                        try self.binary(ValueType.Number, instruction);
+                    } else {
+                        return self.runtimeError("Operands must be two numbers or two strings.", .{});
                     }
                 },
                 .Subtract, .Multiply, .Divide, .Greater, .Less => {
-                    try self.binary(Value.Number, instruction);
+                    try self.binary(ValueType.Number, instruction);
                 },
                 .Not => {
-                    const value = Value{ .Bool = !self.pop().isTruthy() };
+                    const value = Value.fromBool(self.pop().isFalsey());
                     self.push(value);
                 },
                 .Negate => {
-                    switch (self.peek(0)) {
-                        .Number => |x| {
-                            const number = self.pop().Number;
-                            self.push(Value{ .Number = -number });
-                        },
-                        else => {
-                            return self.runtimeError("Operand must be a number.", .{});
-                        },
-                    }
+                    if (!self.peek(0).isNumber())
+                        return self.runtimeError("Operand must be a number.", .{});
+
+                    const number = self.pop().asNumber();
+                    self.push(Value.fromNumber(-number));
                 },
                 .Print => {
-                    const val = self.pop();
-                    self.print(val);
-                    self.puts("\n");
+                    const stdout = std.io.getStdOut().outStream();
+                    try stdout.print("{}\n", .{self.pop()});
+                },
+                .NewList => {
+                    const list = try Obj.List.create(self);
+                    self.push(list.obj.value());
+                },
+                .AddList => {
+                    const itemValue = self.pop();
+                    const listValue = self.pop();
+
+                    const list = listValue.asObj().asList();
+                    try list.items.append(itemValue);
+
+                    self.push(list.obj.value());
+                },
+                .Subscript => {
+                    const indexValue = self.pop();
+                    const listValue = self.pop();
+
+                    if (!indexValue.isNumber()) {
+                        return self.runtimeError("List index must be a number", .{});
+                    }
+
+                    const list = listValue.asObj().asList();
+                    const index = indexValue.asInteger();
+                    const value = list.items.items[index];
+
+                    self.push(value);
+                },
+                .SubscriptAssign => {
+                    const assignValue = self.peek(0);
+                    const indexValue = self.peek(1);
+                    const listValue = self.peek(2);
+
+                    if (!listValue.isObj()) {
+                        return self.runtimeError("Can only subscript lists.", .{});
+                    }
+
+                    if (!indexValue.isNumber()) {
+                        return self.runtimeError("List index must be a number.", .{});
+                    }
+
+                    const list = listValue.asObj().asList();
+                    const index = indexValue.asInteger();
+
+                    if (index >= 0 and index < list.items.items.len) {
+                        list.items.items[index] = assignValue;
+                        self.push(Value.nil());
+                    } else {
+                        _ = self.pop();
+                        _ = self.pop();
+                        _ = self.pop();
+
+                        self.push(Value.nil());
+
+                        return self.runtimeError("List index out of bounds.", .{});
+                    }
                 },
                 .JumpIfFalse => {
                     const offset = frame.readShort();
-                    if (!self.peek(0).isTruthy()) frame.ip += offset;
+                    if (self.peek(0).isFalsey()) frame.ip += offset;
                 },
                 .Jump => {
                     const offset = frame.readShort();
@@ -479,12 +524,12 @@ pub const VM = struct {
                 .SuperInvoke => {
                     const method = frame.readString();
                     const arg_count = frame.readByte();
-                    const superclass = self.pop().Obj.asClass();
+                    const superclass = self.pop().asObj().asClass();
                     try self.invokeFromClass(superclass, method, arg_count);
                     frame = &self.frames[self.frame_count - 1];
                 },
                 .Closure => {
-                    const function = frame.readConstant().Obj.asFunction();
+                    const function = frame.readConstant().asObj().asFunction();
                     var closure = try Obj.Closure.create(self, function);
                     self.push(closure.obj.value());
                     for (closure.upvalues) |*u| {
@@ -506,8 +551,8 @@ pub const VM = struct {
                     self.frame_count -= 1;
 
                     const result = self.pop();
-                    
-                    if (self.frame_count == 0) 
+
+                    if (self.frame_count == 0)
                         return;
 
                     self.stack.items.len -= self.stack.items.len - frame.slots;
@@ -525,12 +570,12 @@ pub const VM = struct {
                 //     try self.createClass(frame.readString(), &superclass.Obj.data.Class);
                 // },
                 .Inherit => {
-                    const superclassObject = self.peek(1).Obj;
+                    const superclassObject = self.peek(1).asObj();
                     if (superclassObject.objType != .Class)
                         return self.runtimeError("Only instances have properties.", .{});
 
                     const superclass = superclassObject.asClass();
-                    const subclass = self.peek(0).Obj.asClass();
+                    const subclass = self.peek(0).asObj().asClass();
 
                     for (superclass.methods.items()) |entry| {
                         try subclass.methods.put(entry.key, entry.value);
@@ -542,7 +587,7 @@ pub const VM = struct {
                     try self.defineMethod(frame.readString());
                 },
                 .GetProperty => {
-                    const obj = self.peek(0).Obj;
+                    const obj = self.peek(0).asObj();
                     if (obj.objType != .Instance) {
                         return self.runtimeError("Only instances have properties.", .{});
                     }
@@ -558,7 +603,7 @@ pub const VM = struct {
                     }
                 },
                 .SetProperty => {
-                    const obj = self.peek(1).Obj;
+                    const obj = self.peek(1).asObj();
                     if (obj.objType != .Instance) {
                         return self.runtimeError("Only instances have properties.", .{});
                     }
@@ -583,11 +628,11 @@ pub const VM = struct {
         var val: Value = undefined;
         switch (value_type) {
             .Number => {
-                if (self.peek(0) != .Number or self.peek(1) != .Number) {
+                if (!self.peek(0).isNumber() or !self.peek(1).isNumber()) {
                     return self.runtimeError("Operands must be numbers", .{});
                 }
-                const rhs = self.pop().Number;
-                const lhs = self.pop().Number;
+                const rhs = self.pop().asNumber();
+                const lhs = self.pop().asNumber();
 
                 switch (operator) {
                     .Add, .Subtract, .Multiply, .Divide => {
@@ -598,7 +643,7 @@ pub const VM = struct {
                             .Divide => lhs / rhs,
                             else => unreachable,
                         };
-                        val = Value{ .Number = number };
+                        val = Value.fromNumber(number);
                     },
                     .Less, .LessEqual, .Greater, .GreaterEqual => {
                         const result = switch (operator) {
@@ -608,23 +653,23 @@ pub const VM = struct {
                             .GreaterEqual => lhs >= rhs,
                             else => unreachable,
                         };
-                        val = Value{ .Bool = result };
+                        val = Value.fromBool(result);
                     },
                     else => unreachable,
                 }
             },
             .Bool => {
-                if (self.peek(0) != .Bool or self.peek(1) != .Bool) {
+                if (!self.peek(0).isBool() or !self.peek(1).isBool()) {
                     return self.runtimeError("Operands must be boolean", .{});
                 }
-                const rhs = self.pop().Bool;
-                const lhs = self.pop().Bool;
+                const rhs = self.pop().asBool();
+                const lhs = self.pop().asBool();
                 const result = switch (operator) {
                     .And => lhs and rhs,
                     .Or => lhs or rhs,
                     else => unreachable,
                 };
-                val = Value{ .Bool = result };
+                val = Value.fromBool(result);
             },
             else => unreachable,
         }
@@ -633,8 +678,8 @@ pub const VM = struct {
     }
 
     fn concatenate(self: *VM) !void {
-        const a = self.peek(1).Obj.asString();
-        const b = self.peek(0).Obj.asString();
+        const a = self.peek(1).asObj().asString();
+        const b = self.peek(0).asObj().asString();
 
         const length = a.bytes.len + b.bytes.len;
         var bytes = try allocator.alloc(u8, length);
