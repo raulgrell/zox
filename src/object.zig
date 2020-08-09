@@ -355,7 +355,6 @@ pub const Obj = struct {
         obj: Obj,
         items: std.ArrayList(Value),
 
-
         pub fn create(vm: *VM) !*List {
             const obj = try Obj.create(vm, List, .List);
             const list = obj.asList();
@@ -371,25 +370,3 @@ pub const Obj = struct {
         }
     };
 };
-
-pub fn reallocate(comptime T: type, previous: ?[]T, oldSize: usize, newSize: usize) ?[]T {
-    vm.bytesAllocated += newSize - oldSize;
-
-    if (stress_gc and newSize > oldSize) {
-        collectGarbage();
-    }
-
-    if (vm.bytesAllocated > vm.nextGC) {
-        collectGarbage();
-    }
-
-    if (previous) |p| {
-        if (newSize == 0) {
-            allocator.free(p);
-            return null;
-        }
-        return allocator.alloc(T, newSize) catch null;
-    } else {
-        return allocator.alloc(T, newSize) catch null;
-    }
-}

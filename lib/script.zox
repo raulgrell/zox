@@ -4,7 +4,9 @@ class Vec3 {
     } 
 } 
 
-var vv = Vec3(); vv.str();
+var vv = Vec3();
+
+vv.str();
 
 fn fib(n) {
     if (n < 2) return n;
@@ -26,23 +28,23 @@ var p = go("dude");
 p();
 
 class F { 
-    fn cook() { 
-        print "Dunk"; 
-        this.end("sprinkles"); 
+    fn cook() {
+        print "Dunk";
+        this.end("sprinkles");
     } 
-    
-    fn end(thing) { 
-        print "Add " + thing; 
+    fn end(thing) {
+        print "Add " + thing;
     } 
-}
+} 
 
-var ff = F(); ff.cook();
+var ff = F();
+ff.cook(); 
 
-class D < F {
+class D < F 
     fn end(thing) {
         super.end("icing");
     }
 }
 
-var dd = D(); dd.cook();
-
+var dd = D();
+dd.cook();

@@ -288,7 +288,7 @@ pub const Context = struct {
 
         if (verbose) {
             const name = if (func.name) |n| n.bytes else "Chunk";
-            self.current.chunk().disassemble(name);
+            func.chunk.disassemble(name);
         }
 
         if (self.current.enclosing) |outer| {
