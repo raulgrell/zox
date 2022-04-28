@@ -1,97 +1,120 @@
 const std = @import("std");
 const Value = @import("./value.zig").Value;
+const VM = @import("./vm.zig").VM;
+const Obj = @import("./object.zig").Obj;
 
-pub fn clockNative(args: []Value) Value {
-    return Value.fromNumber(@intToFloat(f64, std.time.milliTimestamp()) / 1000);
+pub const stdModule = @import("./lib/std.zig");
+pub const boolModule = @import("./lib/bool.zig");
+pub const classModule = @import("./lib/class.zig");
+pub const instanceModule = @import("./lib/instance.zig");
+pub const listModule = @import("./lib/list.zig");
+pub const mapModule = @import("./lib/map.zig");
+pub const nullModule = @import("./lib/null.zig");
+pub const numberModule = @import("./lib/number.zig");
+pub const stringModule = @import("./lib/string.zig");
+
+const SlotType = enum {
+    Bool,
+    Num,
+    Foreign,
+    List,
+    Map,
+    String,
+    Null,
+};
+
+fn copyDict(vm: *VM, oldDict: *Obj.Dict) *Obj.Dict {
+    const dict = Obj.Dict.create(vm);
+
+    // Push to stack to avoid GC
+    vm.push(Value.fromObj(dict));
+
+    _ = oldDict;
+
+    // var i = 0;
+    // while (i <= oldDict.capacityMask) : (i += 1) {
+    //     if (IS_EMPTY(oldDict.entries[i].key)) {
+    //         continue;
+    //     }
+
+    //     const val = oldDict.entries[i].value;
+
+    //     // Push to stack to avoid GC
+    //     vm.push(val);
+    //     dictSet(vm, dict, oldDict.entries[i].key, val);
+    //     _ = vm.pop();
+    // }
+
+    _ = vm.pop();
+    return dict;
 }
 
-pub fn assertNative(args: []Value) bool {
-    if (args[0] != .Bool) {
-        runtimeError("assert() only takes a boolean as an argument.", argCount);
-        return false;
-    }
+fn copyList(vm: *VM, oldlist: *Obj.List) *Obj.List {
+    const list = Obj.List.create(vm);
 
-    if (!value.Bool) {
-        runtimeError("assert() was false!");
-        return false;
-    }
+    // Push to stack to avoid GC
+    vm.push(Value.fromObj(list.obj));
 
-    return true;
+    _ = oldlist;
+
+    // var i = 0;
+    // while (i < oldList.values.count) : (i += 1) {
+    //     const val = oldList.values.values[i];
+
+    //     // Push to stack to avoid GC
+    //     vm.push(val);
+    //     writeValueArray(vm, &list.values, val);
+    //     _ = vm.pop();
+    // }
+
+    _ = vm.pop();
+    return list;
 }
 
-fn inputNative(args: []Value) Value {
-    if (argCount > 1) {
-        runtimeError("input() takes either 0 or 1 argument (%d given)", argCount);
-        return NULL_VAL;
-    }
+fn copyInstance(vm: *VM, oldInstance: *Obj.Instance) *Obj.Instance {
+    const instance = Obj.Instance.create(vm, oldInstance.class);
 
-    if (argCount != 0) {
-        const prompt = args[0];
+    // Push to stack to avoid GC
+    vm.push(Value.fromObj(instance.obj));
 
-        if (!IS_STRING(prompt)) {
-            runtimeError("input() only takes a string argument");
-            return NULL_VAL;
-        }
+    _ = oldInstance;
 
-        printf("%s ", AS_CSTRING(prompt));
-    }
+    // if (shallow) {
+    //     tableAddAll(vm, &oldInstance.publicFields, &instance.publicFields);
+    // } else {
+    //     var i = 0;
+    //     while (i <= oldInstance.publicFields.capacityMask) : (i += 1) {
+    //         const entry = &oldInstance.publicFields.entries[i];
+    //         if (entry.key != NULL) {
+    //             const val = entry.value;
 
-    const currentSize = 128;
-    char * line = malloc(currentSize);
+    //             if (IS_LIST(val)) {
+    //                 val = Value.fromObj(copyList(vm, AS_LIST(val)));
+    //             } else if (IS_DICT(val)) {
+    //                 val = Value.fromObj(copyDict(vm, AS_DICT(val)));
+    //             } else if (IS_INSTANCE(val)) {
+    //                 val = Value.fromObj(copyInstance(vm, AS_INSTANCE(val)));
+    //             }
 
-    if (line == NULL) {
-        runtimeError("Memory error on input()");
-        return NULL_VAL;
-    }
+    //             // Push to stack to avoid GC
+    //             vm.push(val);
+    //             tableSet(vm, &instance.publicFields, entry.key, val);
+    //             _ = vm.pop();
+    //         }
+    //     }
+    // }
 
-    const c = EOF;
-    const i = 0;
-
-    // read line
-
-    const input = OBJ_VAL(copyString(line, strlen(line)));
-    free(line);
-    return input;
-}
-
-fn printNative(args: []Value) Value {
-    if (argCount == 0) {
-        printf("\n");
-        return NULL_VAL;
-    }
-
-    for (args) |value| {
-        printValue(value);
-        printf("\n");
-    }
-
-    return NULL_VAL;
-}
-
-fn errorNative(args: []Value) Value {
-    if (argCount == 0) {
-        return NULL_VAL;
-    }
-
-    runtimeError(AS_CSTRING(args[0]));
-    exit(70);
-
-    return NULL_VAL;
+    _ = vm.pop();
+    return instance;
 }
 
 const NativeBinding = struct {
-    name: []const u8, function: NativeFn
+    name: []const u8,
+    function: fn errorNative(vm: *VM, args: []Value) error{RuntimeError}!Value,
 };
 
-const natives = [_]NativeBinding{
-    .{ .name = "clock", .function = clockNative },
-    .{ .name = "input", .function = inputNative },
-    .{ .name = "print", .function = printNative },
-    .{ .name = "write", .function = writeNative },
-    .{ .name = "error", .function = errorNative },
-    .{ .name = "assert", .function = assertNative },
-};
+const natives = [_]NativeBinding{};
 
-fn defineAllNatives() !void {
-    for (natives) |n| try defineNative(n.name, n.function);
+fn defineAllNatives(vm: *VM) !void {
+    for (natives) |n| try vm.defineNative(n.name, n.function);
 }

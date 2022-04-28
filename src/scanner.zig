@@ -58,7 +58,7 @@ pub const Token = struct {
     }
 };
 
-pub const TokenType = enum {
+pub const TokenType = enum(u8) {
     // Punctuation
     LeftParen,
     RightParen,
@@ -120,7 +120,7 @@ pub const Scanner = struct {
     line: u32,
 
     pub fn create(source: []const u8) Scanner {
-        return Scanner {
+        return Scanner{
             .start = source,
             .current = 0,
             .line = 1,
@@ -250,7 +250,7 @@ pub const Scanner = struct {
 
     fn identifierType(self: *Scanner) TokenType {
         const text = self.start[0..self.current];
-        for (keywords) |kw, i| {
+        for (keywords) |kw| {
             if (std.mem.eql(u8, kw.name, text)) return kw.token_type;
         }
         return .Identifier;

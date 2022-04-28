@@ -1,15 +1,17 @@
 const std = @import("std");
 const Obj = @import("./object.zig").Obj;
 
-pub const NAN_TAGGING = true;
+const config = @import("./config.zig");
+const debug = @import("./debug.zig");
+const tracy = @import("./tracy.zig");
 
-pub const Value = if (NAN_TAGGING) NanTaggedValue else UnionValue;
+pub const Value = if (config.nanTagging) NanTaggedValue else UnionValue;
 
 pub const ValueType = enum {
-  Bool,
-  Number,
-  Obj,
-  Nil,
+    Bool,
+    Number,
+    Obj,
+    Nil,
 };
 
 pub const NanTaggedValue = packed struct {
@@ -18,9 +20,9 @@ pub const NanTaggedValue = packed struct {
     const SIGN_BIT: u64 = 0x8000000000000000;
     const QNAN: u64 = 0x7ffc000000000000;
 
-    const TAG_NIL = 1; // 01.
-    const TAG_FALSE = 2; // 10.
-    const TAG_TRUE = 3; // 11.
+    const TAG_NIL = 0b01;
+    const TAG_FALSE = 0b10;
+    const TAG_TRUE = 0b11;
 
     const NIL_VAL = NanTaggedValue{ .data = QNAN | TAG_NIL };
     const TRUE_VAL = NanTaggedValue{ .data = QNAN | TAG_TRUE };
@@ -38,8 +40,20 @@ pub const NanTaggedValue = packed struct {
         return (self.data & QNAN) != QNAN;
     }
 
+    pub fn isInteger(self: NanTaggedValue) bool {
+        return (self.data & QNAN) != QNAN;
+    }
+
     pub fn isObj(self: NanTaggedValue) bool {
         return (self.data & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT);
+    }
+
+    pub fn isObjString(self: NanTaggedValue) bool {
+        return (self.data & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT);
+    }
+
+    pub fn isObjType(self: NanTaggedValue, objType: Obj.Type) bool {
+        return self.isObj() and self.asObj().objType == objType;
     }
 
     pub fn asNumber(self: NanTaggedValue) f64 {
@@ -60,6 +74,10 @@ pub const NanTaggedValue = packed struct {
     pub fn asObj(self: NanTaggedValue) *Obj {
         std.debug.assert(self.isObj());
         return @intToPtr(*Obj, @intCast(usize, self.data & ~(SIGN_BIT | QNAN)));
+    }
+
+    pub fn asObjType(self: NanTaggedValue, comptime objType: Obj.Type) *Obj.ObjType(objType) {
+        return self.asObj().asObjType(objType);
     }
 
     pub fn fromNumber(x: f64) NanTaggedValue {
@@ -90,21 +108,129 @@ pub const NanTaggedValue = packed struct {
         return self.data == other.data;
     }
 
-    pub fn format(self: NanTaggedValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: var) !void {
+    pub fn format(self: NanTaggedValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        _ = options;
+        _ = fmt;
         if (self.isNumber()) {
-            try out_stream.print("{d}", .{self.asNumber()});
+            try writer.print("{d}", .{self.asNumber()});
         } else if (self.isBool()) {
-            try out_stream.print("{}", .{self.asBool()});
+            try writer.print("{}", .{self.asBool()});
         } else if (self.isNil()) {
-            try out_stream.print("nil", .{});
+            try writer.print("nil", .{});
         } else {
             const obj = self.asObj();
-            try printObject(obj, out_stream);
+            try printObject(obj, writer);
         }
     }
 };
 
-pub const UnionValue = union(enum) {
+pub const PointerTaggedValue = packed struct {
+    data: u64,
+
+    const SIGN_BIT: u64 = 0x8000000000000000;
+    const QNAN: u64 = 0x7ffc000000000000;
+
+    const TAG_NIL = 1; // 001.
+    const TAG_FALSE = 2; // 010.
+    const TAG_TRUE = 3; // 011.
+
+    const NIL_VAL = PointerTaggedValue{ .data = QNAN | TAG_NIL };
+    const TRUE_VAL = PointerTaggedValue{ .data = QNAN | TAG_TRUE };
+    const FALSE_VAL = PointerTaggedValue{ .data = QNAN | TAG_FALSE };
+
+    pub fn isBool(self: PointerTaggedValue) bool {
+        return (self.data & FALSE_VAL.data) == FALSE_VAL.data;
+    }
+
+    pub fn isNil(self: PointerTaggedValue) bool {
+        return self.data == NIL_VAL.data;
+    }
+
+    pub fn isNumber(self: PointerTaggedValue) bool {
+        return (self.data & QNAN) != QNAN;
+    }
+
+    pub fn isInteger(self: PointerTaggedValue) bool {
+        return (self.data & QNAN) != QNAN;
+    }
+
+    pub fn isObj(self: PointerTaggedValue) bool {
+        return (self.data & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT);
+    }
+
+    pub fn isObjType(self: PointerTaggedValue, objType: Obj.Type) bool {
+        return self.isObj() and self.asObj().objType == objType;
+    }
+
+    pub fn asNumber(self: PointerTaggedValue) f64 {
+        std.debug.assert(self.isNumber());
+        return @bitCast(f64, self.data);
+    }
+
+    pub fn asInteger(self: PointerTaggedValue) u32 {
+        std.debug.assert(self.isNumber());
+        return @floatToInt(u32, @bitCast(f64, self.data));
+    }
+
+    pub fn asBool(self: PointerTaggedValue) bool {
+        std.debug.assert(self.isBool());
+        return self.data == TRUE_VAL.data;
+    }
+
+    pub fn asObj(self: PointerTaggedValue) *Obj {
+        std.debug.assert(self.isObj());
+        return @intToPtr(*Obj, @intCast(usize, self.data & ~(SIGN_BIT | QNAN)));
+    }
+
+    pub fn asObjType(self: PointerTaggedValue, comptime objType: Obj.Type) *Obj.ObjType(objType) {
+        return self.asObj().asObjType(objType);
+    }
+
+    pub fn fromNumber(x: f64) PointerTaggedValue {
+        return PointerTaggedValue{ .data = @bitCast(u64, x) };
+    }
+
+    pub fn fromBool(x: bool) PointerTaggedValue {
+        return if (x) TRUE_VAL else FALSE_VAL;
+    }
+
+    pub fn fromObj(x: *Obj) PointerTaggedValue {
+        return PointerTaggedValue{ .data = SIGN_BIT | QNAN | @ptrToInt(x) };
+    }
+
+    pub fn nil() PointerTaggedValue {
+        return NIL_VAL;
+    }
+
+    pub fn isFalsey(self: PointerTaggedValue) bool {
+        if (self.isBool()) return !self.asBool();
+        if (self.isNil()) return true;
+        return false;
+    }
+
+    pub fn equals(self: PointerTaggedValue, other: PointerTaggedValue) bool {
+        // Be careful about IEEE NaN equality semantics
+        if (self.isNumber() and other.isNumber()) return self.asNumber() == other.asNumber();
+        return self.data == other.data;
+    }
+
+    pub fn format(self: PointerTaggedValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        _ = options;
+        _ = fmt;
+        if (self.isNumber()) {
+            try writer.print("{d}", .{self.asNumber()});
+        } else if (self.isBool()) {
+            try writer.print("{}", .{self.asBool()});
+        } else if (self.isNil()) {
+            try writer.print("nil", .{});
+        } else {
+            const obj = self.asObj();
+            try printObject(obj, writer);
+        }
+    }
+};
+
+pub const UnionValue = union(ValueType) {
     Bool: bool,
     Nil,
     Number: f64,
@@ -126,6 +252,10 @@ pub const UnionValue = union(enum) {
         return self == .Obj;
     }
 
+    pub fn isObjType(self: UnionValue, objType: Obj.Type) bool {
+        return self.isObj() and self.asObj().objType == objType;
+    }
+
     pub fn asBool(self: UnionValue) bool {
         std.debug.assert(self.isBool());
         return self.Bool;
@@ -144,6 +274,10 @@ pub const UnionValue = union(enum) {
     pub fn asObj(self: UnionValue) *Obj {
         std.debug.assert(self.isObj());
         return self.Obj;
+    }
+
+    pub fn asObjType(self: UnionValue, comptime objType: Obj.Type) *Obj.ObjType(objType) {
+        return self.asObj().asObjType(objType);
     }
 
     pub fn fromBool(x: bool) UnionValue {
@@ -173,80 +307,126 @@ pub const UnionValue = union(enum) {
 
     pub fn equals(aBoxed: UnionValue, bBoxed: UnionValue) bool {
         return switch (aBoxed) {
-            .Bool => |a| {
-                return switch (bBoxed) {
-                    .Bool => |b| a == b,
-                    else => false,
-                };
+            .Bool => |a| switch (bBoxed) {
+                .Bool => |b| a == b,
+                else => false,
             },
-            .Nil => |a| {
-                return switch (bBoxed) {
-                    .Nil => true,
-                    else => false,
-                };
+            .Nil => switch (bBoxed) {
+                .Nil => true,
+                else => false,
             },
-            .Number => |a| {
-                return switch (bBoxed) {
-                    .Number => |b| a == b,
-                    else => false,
-                };
+            .Number => |a| switch (bBoxed) {
+                .Number => |b| a == b,
+                else => false,
             },
-            .Obj => |a| {
-                return switch (bBoxed) {
-                    .Obj => |b| a == b,
-                    else => false,
-                };
+            .Obj => |a| switch (bBoxed) {
+                .Obj => |b| a == b,
+                else => false,
             },
         };
     }
 
-    pub fn format(self: UnionValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, out_stream: var) std.os.WriteError!void {
+    pub fn format(self: UnionValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        _ = fmt;
+        _ = options;
         switch (self) {
-            .Number => |value| try out_stream.print("{d}", .{value}),
-            .Bool => |value| try out_stream.print("{}", .{value}),
-            .Nil => try out_stream.print("nil", .{}),
-            .Obj => |obj| try printObject(obj, out_stream),
+            .Number => |value| try writer.print("{d}", .{value}),
+            .Bool => |value| try writer.print("{}", .{value}),
+            .Nil => try writer.print("nil", .{}),
+            .Obj => |obj| try printObject(obj, writer),
         }
     }
 };
 
 // Shared between the two value representations
-fn printObject(obj: *Obj, out_stream: var) std.os.WriteError!void {
+fn printObject(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
     switch (obj.objType) {
-        .String => try out_stream.print("{}", .{obj.asString().bytes}),
-        .List => {
-            const list = obj.asList();
-            try out_stream.print("[", .{});
-            for (list.items.items) |item, i| {
-                try item.format("{}", .{}, out_stream);
-                if (i + 1 == list.items.items.len) break;
-                try out_stream.print(", ", .{});
-            }
-            try out_stream.print("]", .{});
-        },
-        .Function => {
-            const name = if (obj.asFunction().name) |str| str.bytes else "<script>";
-            try out_stream.print("<fn {}>", .{name});
-        },
-        .Native => {
-            try out_stream.print("<native fn>", .{});
-        },
-        .Closure => {
-            const name = if (obj.asClosure().function.name) |str| str.bytes else "<script>";
-            try out_stream.print("<fn {}>", .{name});
-        },
-        .Upvalue => {
-            try out_stream.print("upvalue", .{});
-        },
-        .Class => {
-            try out_stream.print("{}", .{obj.asClass().name.bytes});
-        },
-        .Instance => {
-            try out_stream.print("{} instance", .{obj.asInstance().class.name.bytes});
-        },
-        .BoundMethod => {
-            const name = if (obj.asBoundMethod().method.function.name) |str| str.bytes else "<script>";
-            try out_stream.print("<fn {}>", .{name});
-        },
+        .String => try printString(obj, writer),
+        .List => try printList(obj, writer),
+        .Function => try printFunction(obj, writer),
+        .Native => try printNative(obj, writer),
+        .Closure => try printClosure(obj, writer),
+        .Upvalue => try printUpvalue(obj, writer),
+        .Class => try printClass(obj, writer),
+        .Instance => try printInstance(obj, writer),
+        .BoundMethod => try printBoundMethod(obj, writer),
     }
+}
+
+fn printString(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    try writer.print("{s}", .{obj.asString().bytes});
+}
+
+fn printList(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    const list = obj.asList();
+    try writer.print("[", .{});
+    for (list.items.items) |item, i| {
+        try item.format("{}", .{}, writer);
+        if (i + 1 == list.items.items.len) break;
+        try writer.print(", ", .{});
+    }
+    try writer.print("]", .{});
+}
+
+fn printFunction(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    const name = if (obj.asFunction().name) |str| str.bytes else "<script>";
+    try writer.print("<fn {s}>", .{name});
+}
+
+fn printNative(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    const func = obj.asNative();
+    try writer.print("<native fn {s}>", .{func.name.bytes});
+}
+
+fn printClosure(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    const name = if (obj.asClosure().function.name) |str| str.bytes else "<script>";
+    try writer.print("<fn {s}>", .{name});
+}
+
+fn printUpvalue(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    const val = obj.asUpvalue().location;
+    try writer.print("upvalue {}", .{val});
+}
+
+fn printClass(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    try writer.print("{s}", .{obj.asClass().name.bytes});
+}
+
+fn printInstance(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    try writer.print("{s} instance", .{obj.asInstance().class.name.bytes});
+}
+
+fn printBoundMethod(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
+    const t = tracy.Zone(@src());
+    defer t.End();
+
+    const name = if (obj.asBoundMethod().method.function.name) |str| str.bytes else "<script>";
+    try writer.print("<fn {s}>", .{name});
 }

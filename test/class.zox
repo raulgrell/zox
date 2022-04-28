@@ -1,0 +1,52 @@
+class Fact {
+    fn init(p_a, p_b) {
+        this.a = p_a;
+        this.b = p_b;
+        print p_a;
+        print p_b;
+    }
+
+    fn gg() {
+        var s = this.a + this.b;
+        print s;
+        this.a = this.b;
+        this.b = s;
+    }
+}
+
+var fk = clock();
+var f = Fact(0, 1);
+var j = 0;
+while (j < 200) {
+    f.gg();
+    j = j + 1;
+}
+var ft = clock() - fk;
+print ft;
+
+f = Fact(0,1);
+j = 0;
+while (j < 200) {
+    f.gg();
+    j = j + 1;
+}
+ft = clock() - fk;
+print ft;
+
+f = Fact(0,1);
+j = 0;
+while (j < 200) {
+    f.gg();
+    j = j + 1;
+}
+ft = clock() - fk;
+print ft;
+
+f = Fact(0,1);
+j = 0;
+while (j < 200) {
+    f.gg();
+    j = j + 1;
+}
+ft = clock() - fk;
+print ft;

@@ -5,11 +5,11 @@ pub fn FixedCapacityStack(comptime T: type) type {
     return struct {
         buffer: []T,
         items: []T,
-        allocator: *Allocator,
+        allocator: Allocator,
 
         pub const Self = FixedCapacityStack(T);
 
-        pub fn init(allocator: *Allocator, capacity: usize) !Self {
+        pub fn init(allocator: Allocator, capacity: usize) !Self {
             var buffer = try allocator.alloc(T, capacity);
 
             return Self{
@@ -38,7 +38,6 @@ pub fn FixedCapacityStack(comptime T: type) type {
 
         pub fn resize(self: *Self, new_len: usize) !void {
             std.debug.assert(new_len <= self.buffer.len);
-
             self.items = self.buffer[0..new_len];
         }
     };

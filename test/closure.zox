@@ -1,0 +1,26 @@
+fn fact(p_a, p_b) {
+    var a = p_a;
+    var b = p_b;
+    print a;
+    print b;
+
+    fn gg() {
+        var s = a + b;
+        print s;
+        a = b;
+        b = s;
+    }
+
+    return gg;
+}
+
+var pk = clock();
+var p = fact(0, 1);
+var i = 0;
+while (i < 80) {
+    p();
+    i = i + 1;
+}
+
+var pt = clock() - pk;
+print pt;

@@ -8,7 +8,7 @@ const REPL = @import("./repl.zig").REPL;
 const Compiler = @import("./compiler.zig").Compiler;
 const Value = @import("./value.zig").Value;
 
-const example_file = @embedFile("../example/script.zox") ++ [_]u8 {0};
+const example_file = @embedFile("../example/script.zox") ++ [_]u8{0};
 
 export var vm: VM = undefined;
 
@@ -28,7 +28,7 @@ pub export fn _wasm_main(input_ptr: [*]const u8, input_len: usize, output_ptr: *
 
     output_ptr.* = output.ptr;
     output_len.* = output.len;
-    
+
     return true;
 }
 

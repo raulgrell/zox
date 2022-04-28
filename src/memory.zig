@@ -9,57 +9,69 @@ const Table = @import("./table.zig").Table;
 
 pub const GCAllocator = struct {
     vm: *VM,
-    backing_allocator: *Allocator,
-    allocator: Allocator,
+    parent_allocator: Allocator,
     bytesAllocated: usize,
     nextGC: usize,
 
+    const Self = @This();
     const HEAP_GROW_FACTOR = 2;
 
-    pub fn init(vm: *VM, backing_allocator: *Allocator) GCAllocator {
-        return GCAllocator{
+    pub fn init(vm: *VM, parent_allocator: Allocator) GCAllocator {
+        return .{
             .vm = vm,
-            .allocator = Allocator{
-                .reallocFn = realloc,
-                .shrinkFn = shrink,
-            },
-            .backing_allocator = backing_allocator,
+            .parent_allocator = parent_allocator,
             .bytesAllocated = 0,
             .nextGC = 1024 * 1024,
         };
     }
 
-    fn realloc(allocator: *Allocator, old_mem: []u8, old_align: u29, new_size: usize, new_align: u29) std.mem.Allocator.Error![]u8 {
-        const self = @fieldParentPtr(GCAllocator, "allocator", allocator);
+    pub fn allocator(self: *Self) Allocator {
+        return Allocator.init(self, alloc, resize, free);
+    }
 
-        // TODO should we only update this if backing_allocator reallocFn succeeds?
-        if (new_size > old_mem.len) {
-            self.bytesAllocated += new_size - old_mem.len;
-        } else {
-            self.bytesAllocated -= old_mem.len - new_size;
+    fn alloc(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) error{OutOfMemory}![]u8 {
+        if ((self.bytesAllocated + len > self.nextGC) or debug.stress_gc) {
+            try self.collectGarbage();
         }
+        var out = try self.parent_allocator.rawAlloc(len, ptr_align, len_align, ret_addr);
+        self.bytesAllocated += out.len;
+        return out;
+    }
 
-        if (new_size > old_mem.len) {
-            if (self.bytesAllocated > self.nextGC or debug.STRESS_GC) {
-                try self.collectGarbage();
+    fn resize(self: *Self, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
+        if (new_len > buf.len) {
+            if ((self.bytesAllocated + (new_len - buf.len) > self.nextGC) or debug.stress_gc) {
+                self.collectGarbage() catch {
+                    return null;
+                };
             }
         }
 
-        return try self.backing_allocator.reallocFn(self.backing_allocator, old_mem, old_align, new_size, new_align);
+        if (self.parent_allocator.rawResize(buf, buf_align, new_len, len_align, ret_addr)) |resized_len| {
+            if (resized_len > buf.len) {
+                self.bytesAllocated += resized_len - buf.len;
+            } else {
+                self.bytesAllocated -= buf.len - resized_len;
+            }
+            return resized_len;
+        } else {
+            return null;
+        }
     }
 
-    fn shrink(allocator: *Allocator, old_mem: []u8, old_align: u29, new_size: usize, new_align: u29) []u8 {
-        const self = @fieldParentPtr(GCAllocator, "allocator", allocator);
-
-        // NOTE, new_size is guaranteed to be less than old_mem.len
-        self.bytesAllocated -= old_mem.len - new_size;
-
-        return self.backing_allocator.shrinkFn(self.backing_allocator, old_mem, old_align, new_size, new_align);
+    fn free(
+        self: *Self,
+        buf: []u8,
+        buf_align: u29,
+        ret_addr: usize,
+    ) void {
+        self.parent_allocator.rawFree(buf, buf_align, ret_addr);
+        self.bytesAllocated -= buf.len;
     }
 
-    fn collectGarbage(self: *GCAllocator) !void {
-        if (debug.LOG_GC) {
-            std.debug.warn("-- gc begin\n", .{});
+    fn collectGarbage(self: *Self) !void {
+        if (debug.trace_gc) {
+            std.debug.print("-- gc begin\n", .{});
         }
 
         try self.markRoots();
@@ -69,12 +81,12 @@ pub const GCAllocator = struct {
 
         self.nextGC = self.bytesAllocated * HEAP_GROW_FACTOR;
 
-        if (debug.LOG_GC) {
-            std.debug.warn("-- gc end\n", .{});
+        if (debug.trace_gc) {
+            std.debug.print("-- gc end\n", .{});
         }
     }
 
-    fn markRoots(self: *GCAllocator) !void {
+    fn markRoots(self: *Self) !void {
         for (self.vm.stack.items) |value| {
             try self.markValue(value);
         }
@@ -94,24 +106,23 @@ pub const GCAllocator = struct {
         if (self.vm.initString) |initString| try self.markObject(&initString.obj);
     }
 
-    fn traceReferences(self: *GCAllocator) !void {
+    fn traceReferences(self: *Self) !void {
         while (self.vm.grayStack.items.len > 0) {
             const obj = self.vm.grayStack.pop();
             try self.blackenObject(obj);
         }
     }
 
-    fn removeUnreferencedStrings(self: *GCAllocator) void {
-        for (self.vm.strings.entries) |*entry| {
-            if (entry.key) |key| {
-                if (!key.obj.isMarked) {
-                    _ = self.vm.strings.delete(key);
-                }
+    fn removeUnreferencedStrings(self: *Self) void {
+        var it = self.vm.strings.iterator();
+        while (it.next()) |e| {
+            if (!e.value_ptr.*.obj.isMarked) {
+                _ = self.vm.strings.remove(e.key_ptr.*);
             }
         }
     }
 
-    fn sweep(self: *GCAllocator) void {
+    fn sweep(self: *Self) void {
         var previous: ?*Obj = null;
         var maybeObject = self.vm.objects;
         while (maybeObject) |object| {
@@ -133,9 +144,9 @@ pub const GCAllocator = struct {
         }
     }
 
-    fn blackenObject(self: *GCAllocator, obj: *Obj) !void {
-        if (debug.LOG_GC) {
-            std.debug.warn("{} blacken {}\n", .{@ptrToInt(obj), obj.value()});
+    fn blackenObject(self: *Self, obj: *Obj) !void {
+        if (debug.trace_gc) {
+            std.debug.print("{} blacken {}\n", .{ @ptrToInt(obj), obj.value() });
         }
 
         switch (obj.objType) {
@@ -169,23 +180,24 @@ pub const GCAllocator = struct {
                 try self.markValue(bound.receiver);
                 try self.markObject(&bound.method.obj);
             },
-            .NativeFunction, .String => {},
+            .Native, .String => {},
+            .List => unreachable,
         }
     }
 
-    fn markArray(self: *GCAllocator, values: []Value) !void {
+    fn markArray(self: *Self, values: []Value) !void {
         for (values) |value| try self.markValue(value);
     }
 
-    fn markValue(self: *GCAllocator, value: Value) !void {
+    fn markValue(self: *Self, value: Value) !void {
         if (value.isObj()) try self.markObject(value.asObj());
     }
 
-    fn markObject(self: *GCAllocator, obj: *Obj) !void {
+    fn markObject(self: *Self, obj: *Obj) !void {
         if (obj.isMarked) return;
 
-        if (debug.LOG_GC) {
-            std.debug.warn("{} mark {}\n", .{@ptrToInt(obj), obj.value()});
+        if (debug.trace_gc) {
+            std.debug.print("{} mark {}\n", .{ @ptrToInt(obj), obj.value() });
         }
 
         obj.isMarked = true;
@@ -193,21 +205,20 @@ pub const GCAllocator = struct {
         try self.vm.grayStack.append(obj);
     }
 
-    fn markTable(self: *GCAllocator, table: *Table) !void {
-        for (table.entries) |entry| {
-            if (entry.key) |key| try self.markObject(&key.obj);
-            try self.markValue(entry.value);
+    fn markTable(self: *Self, table: *std.AutoHashMap(*Obj.String, Value)) !void {
+        var it = table.iterator();
+        while (it.next()) |entry| {
+            try self.markObject(&entry.key_ptr.*.obj);
+            try self.markValue(entry.value_ptr.*);
         }
     }
 
-    fn markCompilerRoots(self: *GCAllocator) !void {
-        if (self.vm.parser) |parser| {
-            var maybeCompiler: ?*Compiler = parser.compiler;
-
-            while (maybeCompiler) |compiler| {
-                try self.markObject(&compiler.function.obj);
-                maybeCompiler = compiler.enclosing;
-            }
+    fn markCompilerRoots(self: *Self) !void {
+        _ = self;
+        var maybeCompiler: ?*Compiler = self.vm.instance.current;
+        while (maybeCompiler) |compiler| {
+            try self.markObject(&compiler.function.obj);
+            maybeCompiler = compiler.enclosing;
         }
     }
 };

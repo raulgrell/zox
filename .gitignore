@@ -1,9 +1,19 @@
 # Development
-.dev/
 .vscode/
 *.code-workspace
-zls/
 
 # Zig artifacts
 bin/
 zig-cache/
+zig-out/
+deps.zig
+
+# Packaging
+.gyro/
+gyro.lock
+
+# Dev artifacts
+*.exe
+*.obj
+*.pdb
+*.lib

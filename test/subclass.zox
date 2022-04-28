@@ -1,0 +1,21 @@
+class F { 
+    fn cook() {
+        print "Dunk";
+        this.decorate("sprinkles");
+        return this;
+    } 
+    fn decorate(thing) {
+        print "Add " + thing;
+        return this;
+    } 
+} 
+
+class D < F {
+    fn decorate(thing) {
+        return super.decorate("icing");
+    }
+}
+
+var dd = D();
+var rr = dd.cook();
+print rr;

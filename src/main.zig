@@ -3,47 +3,90 @@ const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 
-const Chunk = @import("./chunk.zig").Chunk;
-const Compiler = @import("./compiler.zig").Compiler;
-const REPL = @import("./repl.zig").REPL;
 const Value = @import("./value.zig").Value;
 const VM = @import("./vm.zig").VM;
 
 const lib = @import("./lib.zig");
+const debug = @import("./debug.zig");
+const cli = @import("./deps/args.zig");
 
-pub const allocator = init: {
-    if (comptime std.Target.current.isWasm()) {
-        break :init std.heap.page_allocator;
-    } else {
-        break :init std.testing.allocator;
-    }
+const tracy_enabled = false;
+
+const Spec = struct {
+    debug: bool = false,
+    pub const shorthands = .{
+        .d = "debug",
+    };
+};
+
+const Verb = union(enum) {
+    // Run a file
+    run: struct {},
+    // Run a command/evaluate an expression
+    cmd: struct {},
+    // Run a REPL
+    repl: struct {
+        then: ?[]const u8 = null,
+    },
+    @"test": struct {
+        // Will run the test on all files in a directory
+        dir: ?[]const u8 = null,
+        include: ?[]const u8 = null,
+        exclude: ?[]const u8 = null,
+    },
 };
 
 pub fn main() !void {
-    if (comptime std.Target.current.isWasm()) {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    if (builtin.target.isWasm()) {
         try repl(allocator);
     } else {
-        const args = try std.process.argsAlloc(allocator);
-        defer std.process.argsFree(allocator, args);
+        const args = try cli.parseWithVerbForCurrentProcess(Spec, Verb, allocator, .print);
+        defer args.deinit();
 
-        switch (args.len) {
-            1 => try repl(),
-            2 => try runFile(args[1]),
-            3 => try runSource(args[2]),
-            else => showUsage(),
+        debugArgs(args);
+
+        if (args.verb) |v| {
+            switch (v) {
+                .run => switch (args.positionals.len) {
+                    0 => try runFile(allocator, "main.zox"),
+                    1 => try runFile(allocator, args.positionals[0]),
+                    else => try showUsage(),
+                },
+                .cmd => switch (args.positionals.len) {
+                    0 => try runSource(allocator, args.positionals[0]),
+                    else => try showUsage(),
+                },
+                .repl => switch (args.positionals.len) {
+                    0 => try repl(allocator),
+                    else => try showUsage(),
+                },
+                .@"test" => {
+                    switch (args.positionals.len) {
+                        //0 => try testFile(allocator, "main.zox"),
+                        //1 => try testFile(allocator, args.positionals[0]),
+                        else => try showUsage(),
+                    }
+                },
+            }
+        } else {
+            try showUsage();
         }
     }
 }
 
-fn repl() !void {
-    const stdout = std.io.getStdOut().outStream();
-    const stdin = std.io.getStdIn().inStream();
+fn repl(allocator: Allocator) !void {
+    const stdout = std.io.getStdOut().writer();
+    const stdin = std.io.getStdIn().reader();
 
-    var vm = VM.create();
-    try vm.initialize();
-    defer vm.destroy();
+    var vm = VM.create(allocator);
 
-    try vm.defineNative("clock", lib.clockNative);
+    try vm.init();
+    defer vm.deinit();
+
+    try vm.defineNative("clock", lib.stdModule.sys.clock);
 
     while (true) {
         try stdout.print("> ", .{});
@@ -56,16 +99,25 @@ fn repl() !void {
     }
 }
 
-fn runFile(path: []const u8) !void {
-    var vm = VM.create();
-    try vm.initialize();
-    defer vm.destroy();
+fn runFile(allocator: Allocator, path: []const u8) !void {
+    const stderr = std.io.getStdErr().writer();
 
-    try vm.defineNative("clock", lib.clockNative);
+    var vm = VM.create(allocator);
 
-    std.debug.warn("Opening: {}\n", .{path});
+    try vm.init();
+    defer vm.deinit();
 
-    const source = try std.fs.cwd().readFileAlloc(allocator, path, 1 * 1024);
+    try vm.defineNative("clock", lib.stdModule.sys.clock);
+
+    std.debug.print("Opening: {s}\n", .{path});
+
+    const source = std.fs.cwd().readFileAlloc(allocator, path, 4 * 1024) catch |err| switch (err) {
+        error.FileNotFound => {
+            try stderr.print("File not found: {s}\n", .{path});
+            return;
+        },
+        else => return err,
+    };
     defer allocator.free(source);
 
     vm.interpret(source) catch |err| switch (err) {
@@ -75,15 +127,15 @@ fn runFile(path: []const u8) !void {
     };
 }
 
+fn runSource(allocator: Allocator, source: []const u8) !void {
+    var vm = VM.create(allocator);
 
-fn runSource(source: []const u8) !void {
-    var vm = VM.create();
-    try vm.initialize();
-    defer vm.destroy();
+    try vm.init();
+    defer vm.deinit();
 
-    try vm.defineNative("clock", lib.clockNative);
+    try vm.defineNative("clock", lib.stdModule.sys.clock);
 
-    std.debug.warn("> {}\n", .{source});
+    std.debug.print("> {s}\n", .{source});
 
     vm.interpret(source) catch |err| switch (err) {
         error.CompileError => std.process.exit(65),
@@ -92,7 +144,55 @@ fn runSource(source: []const u8) !void {
     };
 }
 
-fn showUsage() void {
-    std.debug.warn("Usage: zox [path]\n", .{});
+fn debugArgs(args: cli.ParseArgsResult(Spec, Verb)) void {
+    std.debug.print("{s}", .{args.executable_name});
+    inline for (std.meta.fields(@TypeOf(args.options))) |fld| {
+        std.debug.print(" --{s} {any}", .{ fld.name, @field(args.options, fld.name) });
+    }
+
+    if (args.verb) |v| {
+        std.debug.print(" {s}", .{@tagName(v)});
+        switch (v) {
+            .run => |opts| {
+                inline for (std.meta.fields(@TypeOf(opts))) |fld| {
+                    std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
+                }
+            },
+            .cmd => |opts| {
+                inline for (std.meta.fields(@TypeOf(opts))) |fld| {
+                    std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
+                }
+            },
+            .repl => |opts| {
+                inline for (std.meta.fields(@TypeOf(opts))) |fld| {
+                    std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
+                }
+            },
+            .@"test" => |opts| {
+                inline for (std.meta.fields(@TypeOf(opts))) |fld| {
+                    std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
+                }
+            },
+        }
+    }
+
+    if (args.positionals.len > 0) std.debug.print(" --", .{});
+    for (args.positionals) |arg| std.debug.print(" '{s}'", .{arg});
+    std.debug.print("\n", .{});
+}
+
+fn showUsage() !void {
+    const stderr = std.io.getStdErr().writer();
+    try stderr.print(
+        \\  Usage:
+        \\      zox <command> [options...] [-- paths...]"
+        \\  Options:
+        \\      --debug                 # Display debug information
+        \\  Commands:
+        \\      cmd
+        \\      repl [path]             # Open a repl
+        \\      run  [path]             # Run a file
+        \\      test [paths..]          # Test a file
+    , .{});
     std.process.exit(64);
 }
