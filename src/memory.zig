@@ -13,6 +13,8 @@ pub const GCAllocator = struct {
     bytesAllocated: usize,
     nextGC: usize,
 
+    const vtable: Allocator.VTable = .{ .alloc = alloc, .resize = resize, .free = free };
+
     const Self = @This();
     const HEAP_GROW_FACTOR = 2;
 
@@ -26,45 +28,50 @@ pub const GCAllocator = struct {
     }
 
     pub fn allocator(self: *Self) Allocator {
-        return Allocator.init(self, alloc, resize, free);
+        return Allocator{ .ptr = self, .vtable = &vtable };
     }
 
-    fn alloc(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) error{OutOfMemory}![]u8 {
+    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
         if ((self.bytesAllocated + len > self.nextGC) or debug.stress_gc) {
-            try self.collectGarbage();
+            self.collectGarbage() catch {
+                return null;
+            };
         }
-        var out = try self.parent_allocator.rawAlloc(len, ptr_align, len_align, ret_addr);
-        self.bytesAllocated += out.len;
+        var out = self.parent_allocator.rawAlloc(len, ptr_align, ret_addr) orelse return null;
+        self.bytesAllocated += len;
         return out;
     }
 
-    fn resize(self: *Self, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
+    fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
         if (new_len > buf.len) {
             if ((self.bytesAllocated + (new_len - buf.len) > self.nextGC) or debug.stress_gc) {
                 self.collectGarbage() catch {
-                    return null;
+                    return false;
                 };
             }
         }
 
-        if (self.parent_allocator.rawResize(buf, buf_align, new_len, len_align, ret_addr)) |resized_len| {
-            if (resized_len > buf.len) {
-                self.bytesAllocated += resized_len - buf.len;
+        if (self.parent_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+            if (new_len > buf.len) {
+                self.bytesAllocated += new_len - buf.len;
             } else {
-                self.bytesAllocated -= buf.len - resized_len;
+                self.bytesAllocated -= buf.len - new_len;
             }
-            return resized_len;
+            return true;
         } else {
-            return null;
+            return false;
         }
     }
 
     fn free(
-        self: *Self,
+        ctx: *anyopaque,
         buf: []u8,
-        buf_align: u29,
+        buf_align: u8,
         ret_addr: usize,
     ) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
         self.parent_allocator.rawFree(buf, buf_align, ret_addr);
         self.bytesAllocated -= buf.len;
     }
@@ -146,7 +153,7 @@ pub const GCAllocator = struct {
 
     fn blackenObject(self: *Self, obj: *Obj) !void {
         if (debug.trace_gc) {
-            std.debug.print("{} blacken {}\n", .{ @ptrToInt(obj), obj.value() });
+            std.debug.print("{} blacken {}\n", .{ @intFromPtr(obj), obj.value() });
         }
 
         switch (obj.objType) {
@@ -197,7 +204,7 @@ pub const GCAllocator = struct {
         if (obj.isMarked) return;
 
         if (debug.trace_gc) {
-            std.debug.print("{} mark {}\n", .{ @ptrToInt(obj), obj.value() });
+            std.debug.print("{} mark {}\n", .{ @intFromPtr(obj), obj.value() });
         }
 
         obj.isMarked = true;
@@ -214,7 +221,6 @@ pub const GCAllocator = struct {
     }
 
     fn markCompilerRoots(self: *Self) !void {
-        _ = self;
         var maybeCompiler: ?*Compiler = self.vm.instance.current;
         while (maybeCompiler) |compiler| {
             try self.markObject(&compiler.function.obj);

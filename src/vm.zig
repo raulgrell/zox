@@ -27,7 +27,7 @@ pub const CallFrame = struct {
     }
 
     pub fn readShort(self: *CallFrame) u16 {
-        const value = @intCast(u16, self.ip[0]) << 8 | self.ip[1];
+        const value = @as(u16, @intCast(self.ip[0])) << 8 | self.ip[1];
         self.ip += 2;
         return value;
     }
@@ -172,8 +172,8 @@ pub const VM = struct {
             i -= 1;
             const prev_frame = &self.frames.items[i];
             const function = prev_frame.closure.function;
-            const offset = @ptrToInt(prev_frame.ip) - @ptrToInt(function.chunk.ptr());
-            const line = function.chunk.getLine(@intCast(usize, offset));
+            const offset = @intFromPtr(prev_frame.ip) - @intFromPtr(function.chunk.ptr());
+            const line = function.chunk.getLine(@intCast(offset));
             const name = if (function.name) |str| str.bytes else "<script>";
             std.debug.print("[ line {}] in {s}\n", .{ line, name });
         }
@@ -186,14 +186,14 @@ pub const VM = struct {
     fn printDebug(self: *VM) void {
         const frame = self.currentFrame();
         const chunk = frame.currentChunk();
-        const instruction = @ptrToInt(frame.ip) - @ptrToInt(chunk.ptr());
+        const instruction = @intFromPtr(frame.ip) - @intFromPtr(chunk.ptr());
         self.printStack();
         _ = chunk.disassembleInstruction(instruction);
         std.debug.print("\n", .{});
     }
 
     fn printStack(self: *VM) !void {
-        for (self.stack.items) |v, i| std.debug.print("[ {}: {} ]", .{ i, v });
+        for (self.stack.items, 0..) |v, i| std.debug.print("[ {}: {} ]", .{ i, v });
         std.debug.print("\n", .{});
     }
 
@@ -304,7 +304,7 @@ pub const VM = struct {
             var prevUpvalue: ?*Obj.Upvalue = null;
             var upvalue: ?*Obj.Upvalue = o;
             while (upvalue) |u| {
-                if (@ptrToInt(u.location) > @ptrToInt(local)) {
+                if (@intFromPtr(u.location) > @intFromPtr(local)) {
                     prevUpvalue = u;
                     upvalue = u.next;
                 } else break;
@@ -331,7 +331,7 @@ pub const VM = struct {
         defer t.End();
 
         while (self.openUpvalues) |u| {
-            if (@ptrToInt(u.location) >= @ptrToInt(last)) {
+            if (@intFromPtr(u.location) >= @intFromPtr(last)) {
                 u.closed = u.location.*;
                 u.location = &u.closed;
                 self.openUpvalues = u.next;
@@ -353,11 +353,11 @@ pub const VM = struct {
         try self.frames.append(CallFrame{
             .closure = closure,
             .ip = closure.function.chunk.ptr(),
-            .slots = @intCast(u32, self.stack.items.len) - arg_count - 1,
+            .slots = @as(u32, @intCast(self.stack.items.len)) - arg_count - 1,
         });
     }
 
-    pub fn defineNative(self: *VM, name: []const u8, function: Obj.Native.Fn) !void {
+    pub fn defineNative(self: *VM, name: []const u8, function: *const Obj.Native.Fn) !void {
         const t = tracy.Zone(@src());
         defer t.End();
 
@@ -421,7 +421,7 @@ pub const VM = struct {
 
         while (true) {
             comptime if (debug.trace_vm) self.printDebug();
-            const op = @intToEnum(OpCode, self.currentFrame().readByte());
+            const op = @as(OpCode, @enumFromInt(self.currentFrame().readByte()));
             try self.runOp(op);
             if (op == .Return and self.frames.items.len == 0) break;
         }

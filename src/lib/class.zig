@@ -24,8 +24,8 @@ pub fn methods(vm: *VM, args: []Value) Value {
     // Push to stack to avoid GC
     vm.push(Value.fromObj(list));
 
-    var i = 0;    
-    while ( i <= class.publicMethods.capacityMask) : (i += 1) {
+    var i = 0;
+    while (i <= class.publicMethods.capacityMask) : (i += 1) {
         if (class.publicMethods.entries[i].key == null) continue;
         list.items.append(Value.fromObj(class.publicMethods.entries[i].key));
     }

@@ -7,7 +7,7 @@ pub fn clock(vm: *VM, args: []Value) VM.RuntimeError!Value {
     if (args.len != 1) {
         return vm.runtimeError("clock takes 0 arguments ({} given)", .{args.len - 1});
     }
-    return Value.fromNumber(@intToFloat(f64, std.time.milliTimestamp()) / 1000);
+    return Value.fromNumber(@as(f64, @floatFromInt(std.time.milliTimestamp())) / 1000);
 }
 
 // TODO - make into builtin

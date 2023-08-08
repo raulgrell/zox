@@ -4,7 +4,7 @@ const std = @import("std");
 /// - `Spec` is the configuration of the arguments.
 /// - `allocator` is the allocator that is used to allocate all required memory
 /// - `error_handling` defines how parser errors will be handled.
-pub fn parseForCurrentProcess(comptime Spec: type, allocator: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Spec, null) {
+pub fn parseForCurrentProcess(comptime Spec: type, allocator: std.mem.Allocator, comptime error_handling: ErrorHandling) !ParseArgsResult(Spec, null) {
     // Use argsWithAllocator for portability.
     // All data allocated by the ArgIterator is freed at the end of the function.
     // Data returned to the user is always duplicated using the allocator.
@@ -32,7 +32,7 @@ pub fn parseForCurrentProcess(comptime Spec: type, allocator: std.mem.Allocator,
 /// - `Spec` is the configuration of the arguments.
 /// - `allocator` is the allocator that is used to allocate all required memory
 /// - `error_handling` defines how parser errors will be handled.
-pub fn parseWithVerbForCurrentProcess(comptime Spec: type, comptime Verb: type, allocator: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Spec, Verb) {
+pub fn parseWithVerbForCurrentProcess(comptime Spec: type, comptime Verb: type, allocator: std.mem.Allocator, comptime error_handling: ErrorHandling) !ParseArgsResult(Spec, Verb) {
     // Use argsWithAllocator for portability.
     // All data allocated by the ArgIterator is freed at the end of the function.
     // Data returned to the user is always duplicated using the allocator.
@@ -63,7 +63,7 @@ pub fn parseWithVerbForCurrentProcess(comptime Spec: type, comptime Verb: type, 
 /// - `error_handling` defines how parser errors will be handled.
 ///
 /// Note that `.executable_name` in the result will not be set!
-pub fn parse(comptime Generic: type, args_iterator: anytype, allocator: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Generic, null) {
+pub fn parse(comptime Generic: type, args_iterator: anytype, allocator: std.mem.Allocator, comptime error_handling: ErrorHandling) !ParseArgsResult(Generic, null) {
     return parseInternal(Generic, null, args_iterator, allocator, error_handling);
 }
 
@@ -77,12 +77,12 @@ pub fn parse(comptime Generic: type, args_iterator: anytype, allocator: std.mem.
 /// - `error_handling` defines how parser errors will be handled.
 ///
 /// Note that `.executable_name` in the result will not be set!
-pub fn parseWithVerb(comptime Generic: type, comptime Verb: type, args_iterator: anytype, allocator: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Generic, Verb) {
+pub fn parseWithVerb(comptime Generic: type, comptime Verb: type, args_iterator: anytype, allocator: std.mem.Allocator, comptime error_handling: ErrorHandling) !ParseArgsResult(Generic, Verb) {
     return parseInternal(Generic, Verb, args_iterator, allocator, error_handling);
 }
 
 /// Same as parse, but with anytype argument for testability
-fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterator: anytype, allocator: std.mem.Allocator, error_handling: ErrorHandling) !ParseArgsResult(Generic, MaybeVerb) {
+fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterator: anytype, allocator: std.mem.Allocator, comptime error_handling: ErrorHandling) !ParseArgsResult(Generic, MaybeVerb) {
     var result = ParseArgsResult(Generic, MaybeVerb){
         .arena = std.heap.ArenaAllocator.init(allocator),
         .options = Generic{},
@@ -94,7 +94,7 @@ fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterato
     var result_arena_allocator = result.arena.allocator();
 
     var arglist = std.ArrayList([:0]const u8).init(allocator);
-    errdefer arglist.deinit();
+    defer arglist.deinit();
 
     var last_error: ?anyerror = null;
 
@@ -136,19 +136,21 @@ fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterato
                         const Tag = std.meta.Tag(Verb);
                         inline for (std.meta.fields(Verb)) |verb_info| {
                             if (verb.* == @field(Tag, verb_info.name)) {
-                                inline for (std.meta.fields(verb_info.field_type)) |fld| {
-                                    if (std.mem.eql(u8, pair.name, fld.name)) {
-                                        try parseOption(
-                                            verb_info.field_type,
-                                            result_arena_allocator,
-                                            &@field(verb.*, verb_info.name),
-                                            args_iterator,
-                                            error_handling,
-                                            &last_error,
-                                            fld.name,
-                                            pair.value,
-                                        );
-                                        found = true;
+                                if (comptime canHaveFieldsAndIsNotZeroSized(verb_info.type)) {
+                                    inline for (std.meta.fields(verb_info.type)) |fld| {
+                                        if (std.mem.eql(u8, pair.name, fld.name)) {
+                                            try parseOption(
+                                                verb_info.type,
+                                                result_arena_allocator,
+                                                &@field(verb.*, verb_info.name),
+                                                args_iterator,
+                                                error_handling,
+                                                &last_error,
+                                                fld.name,
+                                                pair.value,
+                                            );
+                                            found = true;
+                                        }
                                     }
                                 }
                             }
@@ -170,7 +172,7 @@ fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterato
                 try arglist.append(try result_arena_allocator.dupeZ(u8, item));
             } else {
                 var any_shorthands = false;
-                for (item[1..]) |char, index| {
+                for (item[1..], 0..) |char, index| {
                     var option_name = [2]u8{ '-', char };
                     var found = false;
                     if (@hasDecl(Generic, "shorthands")) {
@@ -203,30 +205,32 @@ fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterato
                             if (!found) {
                                 const Tag = std.meta.Tag(Verb);
                                 inline for (std.meta.fields(Verb)) |verb_info| {
-                                    const VerbType = verb_info.field_type;
-                                    if (verb.* == @field(Tag, verb_info.name)) {
-                                        const target_value = &@field(verb.*, verb_info.name);
-                                        if (@hasDecl(VerbType, "shorthands")) {
-                                            any_shorthands = true;
-                                            inline for (std.meta.fields(@TypeOf(VerbType.shorthands))) |fld| {
-                                                if (fld.name.len != 1)
-                                                    @compileError("All shorthand fields must be exactly one character long!");
-                                                if (fld.name[0] == char) {
-                                                    const real_name = @field(VerbType.shorthands, fld.name);
-                                                    const real_fld_type = @TypeOf(@field(target_value.*, real_name));
+                                    const VerbType = verb_info.type;
+                                    if (comptime canHaveFieldsAndIsNotZeroSized(VerbType)) {
+                                        if (verb.* == @field(Tag, verb_info.name)) {
+                                            const target_value = &@field(verb.*, verb_info.name);
+                                            if (@hasDecl(VerbType, "shorthands")) {
+                                                any_shorthands = true;
+                                                inline for (std.meta.fields(@TypeOf(VerbType.shorthands))) |fld| {
+                                                    if (fld.name.len != 1)
+                                                        @compileError("All shorthand fields must be exactly one character long!");
+                                                    if (fld.name[0] == char) {
+                                                        const real_name = @field(VerbType.shorthands, fld.name);
+                                                        const real_fld_type = @TypeOf(@field(target_value.*, real_name));
 
-                                                    // -2 because we stripped of the "-" at the beginning
-                                                    if (requiresArg(real_fld_type) and index != item.len - 2) {
-                                                        last_error = error.EncounteredUnexpectedArgument;
-                                                        try error_handling.process(error.EncounteredUnexpectedArgument, Error{
-                                                            .option = &option_name,
-                                                            .kind = .invalid_placement,
-                                                        });
-                                                    } else {
-                                                        try parseOption(VerbType, result_arena_allocator, target_value, args_iterator, error_handling, &last_error, real_name, null);
+                                                        // -2 because we stripped of the "-" at the beginning
+                                                        if (requiresArg(real_fld_type) and index != item.len - 2) {
+                                                            last_error = error.EncounteredUnexpectedArgument;
+                                                            try error_handling.process(error.EncounteredUnexpectedArgument, Error{
+                                                                .option = &option_name,
+                                                                .kind = .invalid_placement,
+                                                            });
+                                                        } else {
+                                                            try parseOption(VerbType, result_arena_allocator, target_value, args_iterator, error_handling, &last_error, real_name, null);
+                                                        }
+                                                        last_error = null; // we need to reset that error here, as it was set previously
+                                                        found = true;
                                                     }
-                                                    last_error = null; // we need to reset that error here, as it was set previously
-                                                    found = true;
                                                 }
                                             }
                                         }
@@ -256,7 +260,7 @@ fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterato
                     inline for (std.meta.fields(Verb)) |fld| {
                         if (std.mem.eql(u8, item, fld.name)) {
                             // found active verb, default-initialize it
-                            result.verb = @unionInit(Verb, fld.name, fld.field_type{});
+                            result.verb = @unionInit(Verb, fld.name, fld.type{});
                         }
                     }
 
@@ -284,8 +288,15 @@ fn parseInternal(comptime Generic: type, comptime MaybeVerb: ?type, args_iterato
         try arglist.append(try result_arena_allocator.dupeZ(u8, item));
     }
 
-    result.positionals = arglist.toOwnedSlice();
+    result.positionals = try arglist.toOwnedSlice();
     return result;
+}
+
+fn canHaveFieldsAndIsNotZeroSized(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .Struct, .Union, .Enum, .ErrorSet => @sizeOf(T) != 0,
+        else => false,
+    };
 }
 
 /// The return type of the argument parser.
@@ -294,7 +305,7 @@ pub fn ParseArgsResult(comptime Generic: type, comptime MaybeVerb: ?type) type {
         @compileError("Generic argument definition must be a struct");
 
     if (MaybeVerb) |Verb| {
-        const ti: std.builtin.TypeInfo = @typeInfo(Verb);
+        const ti: std.builtin.Type = @typeInfo(Verb);
         if (ti != .Union or ti.Union.tag_type == null)
             @compileError("Verb must be a tagged union");
     }
@@ -405,7 +416,7 @@ fn parseInt(comptime T: type, str: []const u8) !T {
                 if (comptime std.math.maxInt(T) < 1024)
                     return error.Overflow;
                 var base: T = if (base1024) 1024 else 1000;
-                multiplier = try std.math.powi(T, base, @intCast(T, pow));
+                multiplier = try std.math.powi(T, base, @as(T, @intCast(pow)));
             }
         }
     }
@@ -485,7 +496,7 @@ fn parseOption(
     arena: std.mem.Allocator,
     target_struct: *Spec,
     args: anytype,
-    error_handling: ErrorHandling,
+    comptime error_handling: ErrorHandling,
     last_error: *?anyerror,
     /// The name of the option that is currently parsed.
     comptime name: []const u8,
@@ -525,7 +536,7 @@ fn parseOption(
         });
         // we couldn't parse the value, so we return a undefined value as we have signalled an
         // error and won't return this anyways.
-        return undefined;
+        return;
     };
 }
 
@@ -596,7 +607,7 @@ pub const Error = struct {
         }
     }
 
-    const Kind = union(enum) {
+    pub const Kind = union(enum) {
         /// When the argument itself is unknown
         unknown,
 
@@ -638,14 +649,18 @@ pub const ErrorHandling = union(enum) {
     /// `error.InvalidArguments` when any error was encountered.
     collect: *ErrorCollection,
 
+    /// Forwards the parsing error to a functionm
+    forward: fn (err: Error) anyerror!void,
+
     /// Processes an error with the given handling method.
-    fn process(self: Self, src_error: anytype, err: Error) !void {
+    fn process(comptime self: Self, src_error: anytype, err: Error) !void {
         if (@typeInfo(@TypeOf(src_error)) != .ErrorSet)
             @compileError("src_error must be a error union!");
         switch (self) {
             .silent => return src_error,
             .print => try std.io.getStdErr().writer().print("{}\n", .{err}),
             .collect => |collection| try collection.insert(err),
+            .forward => |func| try func(err),
         }
     }
 };
@@ -943,4 +958,132 @@ test "index of raw indicator --" {
 
     try std.testing.expectEqual(args.raw_start_index, 2);
     try std.testing.expectEqual(args.positionals.len, 5);
+}
+
+fn reserved_argument(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "shorthands") or std.mem.eql(u8, arg, "meta");
+}
+
+pub fn printHelp(comptime Generic: type, name: []const u8, writer: anytype) !void {
+    if (!@hasDecl(Generic, "meta")) {
+        @compileError("Missing meta declaration in Generic");
+    }
+
+    const Meta = @TypeOf(Generic.meta);
+
+    try writer.print("{s}", .{name});
+
+    if (@hasField(Meta, "summary")) {
+        try writer.print(" {s}", .{Generic.meta.summary});
+    }
+    try writer.print("\n\n", .{});
+
+    if (@hasField(Meta, "full_text")) {
+        try writer.print("{s}\n\n", .{Generic.meta.full_text});
+    }
+
+    if (@hasField(Meta, "option_docs")) {
+        const fields = std.meta.fields(Generic);
+
+        try writer.print("Options:\n", .{});
+        comptime var maxOptionLength = 0;
+        inline for (fields) |field| {
+            if (!reserved_argument(field.name)) {
+                if (!@hasField(@TypeOf(Generic.meta.option_docs), field.name)) {
+                    @compileError("option_docs not specified for field: " ++ field.name);
+                }
+            }
+
+            if (field.name.len > maxOptionLength) {
+                maxOptionLength = field.name.len;
+            }
+        }
+
+        inline for (fields) |field| {
+            if (!reserved_argument(field.name)) {
+                if (@hasDecl(Generic, "shorthands")) {
+                    var foundShorthand = false;
+                    inline for (std.meta.fields(@TypeOf(Generic.shorthands))) |shorthand| {
+                        const option = @field(Generic.shorthands, shorthand.name);
+                        if (std.mem.eql(u8, option, field.name)) {
+                            try writer.print("  -{s}, ", .{shorthand.name});
+                            foundShorthand = true;
+                        }
+                    }
+                    if (!foundShorthand)
+                        try writer.print("      ", .{});
+                }
+                const fmtString = std.fmt.comptimePrint("--{{s: <{}}}   {{s}}\n", .{maxOptionLength});
+                try writer.print(fmtString, .{ field.name, @field(Generic.meta.option_docs, field.name) });
+            }
+        }
+    }
+}
+
+test "full help" {
+    const Options = struct {
+        boolflag: bool = false,
+        stringflag: []const u8 = "hello",
+
+        pub const shorthands = .{
+            .b = "boolflag",
+        };
+
+        pub const meta = .{ .name = "test", .full_text = "testing tool", .summary = "[--boolflag] [--stringflag]", .option_docs = .{
+            .boolflag = "a boolean flag",
+            .stringflag = "a string flag",
+        } };
+    };
+
+    var test_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer test_buffer.deinit();
+
+    try printHelp(Options, "test", test_buffer.writer());
+
+    const expected =
+        \\test [--boolflag] [--stringflag]
+        \\
+        \\testing tool
+        \\
+        \\Options:
+        \\  -b, --boolflag     a boolean flag
+        \\      --stringflag   a string flag
+        \\
+    ;
+
+    try std.testing.expectEqualStrings(expected, test_buffer.items);
+}
+
+test "help with no summary" {
+    const Options = struct {
+        boolflag: bool = false,
+        stringflag: []const u8 = "hello",
+
+        pub const shorthands = .{
+            .b = "boolflag",
+        };
+
+        pub const meta = .{ .full_text = "testing tool", .option_docs = .{
+            .boolflag = "a boolean flag",
+            .stringflag = "a string flag",
+        } };
+    };
+
+    var test_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer test_buffer.deinit();
+
+    try printHelp(Options, "test", test_buffer.writer());
+
+    const expected =
+        \\test
+        \\
+        \\testing tool
+        \\
+        \\Options:
+        \\  -b, --boolflag     a boolean flag
+        \\      --stringflag   a string flag
+        \\
+    ;
+
+    try std.testing.expectEqualStrings(expected, test_buffer.items);
 }

@@ -77,8 +77,6 @@ fn copyInstance(vm: *VM, oldInstance: *Obj.Instance) *Obj.Instance {
     // Push to stack to avoid GC
     vm.push(Value.fromObj(instance.obj));
 
-    _ = oldInstance;
-
     // if (shallow) {
     //     tableAddAll(vm, &oldInstance.publicFields, &instance.publicFields);
     // } else {
@@ -110,7 +108,7 @@ fn copyInstance(vm: *VM, oldInstance: *Obj.Instance) *Obj.Instance {
 
 const NativeBinding = struct {
     name: []const u8,
-    function: fn errorNative(vm: *VM, args: []Value) error{RuntimeError}!Value,
+    function: fn (vm: *VM, args: []Value) error{RuntimeError}!Value,
 };
 
 const natives = [_]NativeBinding{};

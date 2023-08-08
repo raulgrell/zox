@@ -105,8 +105,8 @@ pub const Parser = struct {
 };
 
 pub const ParseRule = struct {
-    prefix: ?ParseFn,
-    infix: ?ParseFn,
+    prefix: ?*const ParseFn,
+    infix: ?*const ParseFn,
     precedence: Precedence,
 };
 
@@ -126,15 +126,15 @@ pub const Precedence = enum(u8) {
     Primary,
 
     fn next(current: Precedence) Precedence {
-        return @intToEnum(Precedence, @enumToInt(current) + 1);
+        return @as(Precedence, @enumFromInt(@intFromEnum(current) + 1));
     }
 
     fn isLowerThan(current: Precedence, other: Precedence) bool {
-        return @enumToInt(current) <= @enumToInt(other);
+        return @intFromEnum(current) <= @intFromEnum(other);
     }
 };
 
-fn makeRule(comptime prefix: ?ParseFn, comptime infix: ?ParseFn, comptime precedence: Precedence) ParseRule {
+fn makeRule(comptime prefix: ?*const ParseFn, comptime infix: ?*const ParseFn, comptime precedence: Precedence) ParseRule {
     return ParseRule{
         .prefix = prefix,
         .infix = infix,
@@ -243,7 +243,7 @@ pub const Compiler = struct {
         // const hasReceiver = self.T != .Function and self.T != .Static;
 
         try self.locals.append(Local{
-            .depth = @intCast(i32, self.scope_depth),
+            .depth = @as(i32, @intCast(self.scope_depth)),
             .isCaptured = false,
             .name = Token.symbol(if (self.T == .Function) "" else "this"),
         });
@@ -447,8 +447,8 @@ pub const Context = struct {
         if (jump > std.math.maxInt(u16)) {
             self.parser.errorAtPrevious("Too much code to jump over");
         }
-        self.current.chunk().code.items[offset + 0] = @truncate(u8, (jump >> 8) & 0xff);
-        self.current.chunk().code.items[offset + 1] = @truncate(u8, jump & 0xff);
+        self.current.chunk().code.items[offset + 0] = @as(u8, @truncate((jump >> 8) & 0xff));
+        self.current.chunk().code.items[offset + 1] = @as(u8, @truncate(jump & 0xff));
     }
 
     fn whileStatement(self: *Context) !void {
@@ -461,7 +461,7 @@ pub const Context = struct {
 
         const surroundingLoopStart = self.parser.innermostLoopStart;
         const surroundingLoopScopeDepth = self.parser.innermostLoopScopeDepth;
-        self.parser.innermostLoopStart = @intCast(u32, self.current.chunk().code.items.len);
+        self.parser.innermostLoopStart = @as(u32, @intCast(self.current.chunk().code.items.len));
         self.parser.innermostLoopScopeDepth = self.current.scope_depth;
 
         self.parser.consume(.LeftParen, "Expect '(' after 'while'.");
@@ -473,7 +473,7 @@ pub const Context = struct {
         self.emitOp(self.current, .Pop);
         try self.statement();
 
-        self.emitLoop(@intCast(i32, self.parser.innermostLoopStart));
+        self.emitLoop(@as(i32, @intCast(self.parser.innermostLoopStart)));
 
         self.patchJump(exitJump);
         self.emitOp(self.current, .Pop);
@@ -756,7 +756,7 @@ pub const Context = struct {
 
         var i = self.current.locals.items.len - 1;
         while (i >= 0) : (i -= 1) {
-            const local_index = @intCast(u8, i);
+            const local_index = @as(u8, @intCast(i));
             const local = &self.current.locals.items[local_index];
             if (local.depth != -1 and local.depth < self.current.scope_depth) break;
             if (identifiersEqual(name, local.name)) {
@@ -787,8 +787,8 @@ pub const Context = struct {
         defer t.End();
 
         if (self.current.scope_depth == 0) return;
-        const local_index = @intCast(u8, self.current.locals.items.len - 1);
-        self.current.locals.items[local_index].depth = @intCast(i32, self.current.scope_depth);
+        const local_index = @as(u8, @intCast(self.current.locals.items.len - 1));
+        self.current.locals.items[local_index].depth = @as(i32, @intCast(self.current.scope_depth));
     }
 
     fn defineVariable(self: *Context, global: u8) void {
@@ -818,15 +818,15 @@ pub const Context = struct {
         const t = tracy.Zone(@src());
         defer t.End();
 
-        var i: i32 = @intCast(i32, compiler.locals.items.len) - 1;
+        var i: i32 = @as(i32, @intCast(compiler.locals.items.len)) - 1;
         while (i >= 0) : (i -= 1) {
-            const local_index = @intCast(u8, i);
+            const local_index = @as(u8, @intCast(i));
             const local = &compiler.locals.items[local_index];
             if (identifiersEqual(name, local.name)) {
                 if (local.depth == -1) {
                     self.parser.errorAtPrevious("Cannot read local variable in its own initializer.");
                 }
-                return @intCast(u8, i);
+                return @as(u8, @intCast(i));
             }
         }
         return null;
@@ -836,9 +836,9 @@ pub const Context = struct {
         const t = tracy.Zone(@src());
         defer t.End();
 
-        for (compiler.upvalues.items) |u, i| {
+        for (compiler.upvalues.items, 0..) |u, i| {
             if (u.index == index and u.isLocal == isLocal) {
-                return @intCast(u8, i);
+                return @as(u8, @intCast(i));
             }
         }
 
@@ -850,7 +850,7 @@ pub const Context = struct {
         try compiler.upvalues.append(.{ .isLocal = isLocal, .index = index });
         compiler.function.upvalueCount += 1;
 
-        return @intCast(u8, compiler.upvalues.items.len - 1);
+        return @as(u8, @intCast(compiler.upvalues.items.len - 1));
     }
 
     fn resolveUpvalue(self: *Context, compiler: *Compiler, name: Token) ?u8 {
@@ -973,7 +973,7 @@ pub const Context = struct {
 
         _ = canAssign;
         const value = std.fmt.parseUnsigned(u8, self.parser.previous.lexeme, 10) catch unreachable;
-        self.emitConstant(self.current, Value.fromNumber(@intToFloat(f64, value)));
+        self.emitConstant(self.current, Value.fromNumber(@as(f64, @floatFromInt(value))));
     }
 
     fn unary(self: *Context, canAssign: bool) void {
@@ -1206,12 +1206,12 @@ pub const Context = struct {
         defer t.End();
 
         self.emitOp(self.current, .Loop);
-        const count = @intCast(i32, self.current.chunk().code.items.len);
-        const offset = @intCast(u16, count - loopStart + 2);
+        const count = @as(i32, @intCast(self.current.chunk().code.items.len));
+        const offset = @as(u16, @intCast(count - loopStart + 2));
         if (offset > std.math.maxInt(u16)) self.parser.errorAtPrevious("Loop body too large.");
 
-        self.emitByte(self.current, @truncate(u8, (offset >> 8) & 0xff));
-        self.emitByte(self.current, @truncate(u8, offset & 0xff));
+        self.emitByte(self.current, @as(u8, @truncate((offset >> 8) & 0xff)));
+        self.emitByte(self.current, @as(u8, @truncate(offset & 0xff)));
     }
 
     fn emitReturn(self: *Context) void {
@@ -1240,14 +1240,14 @@ pub const Context = struct {
         const t = tracy.Zone(@src());
         defer t.End();
 
-        self.emitByte(compiler, @enumToInt(op));
+        self.emitByte(compiler, @intFromEnum(op));
     }
 
     fn emitUnaryOp(self: *Context, compiler: *Compiler, op: OpCode, byte: u8) void {
         const t = tracy.Zone(@src());
         defer t.End();
 
-        self.emitByte(compiler, @enumToInt(op));
+        self.emitByte(compiler, @intFromEnum(op));
         self.emitByte(compiler, byte);
     }
 
@@ -1273,6 +1273,6 @@ pub const Context = struct {
         self.vm.push(value);
         compiler.chunk().constants.append(value) catch unreachable;
         _ = self.vm.pop();
-        return @intCast(u8, compiler.chunk().constants.items.len - 1);
+        return @intCast(compiler.chunk().constants.items.len - 1);
     }
 };

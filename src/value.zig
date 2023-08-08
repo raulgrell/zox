@@ -58,12 +58,12 @@ pub const NanTaggedValue = packed struct {
 
     pub fn asNumber(self: NanTaggedValue) f64 {
         std.debug.assert(self.isNumber());
-        return @bitCast(f64, self.data);
+        return @bitCast(self.data);
     }
 
     pub fn asInteger(self: NanTaggedValue) u32 {
         std.debug.assert(self.isNumber());
-        return @floatToInt(u32, @bitCast(f64, self.data));
+        return @intFromFloat(@as(f64, @bitCast(self.data)));
     }
 
     pub fn asBool(self: NanTaggedValue) bool {
@@ -73,7 +73,7 @@ pub const NanTaggedValue = packed struct {
 
     pub fn asObj(self: NanTaggedValue) *Obj {
         std.debug.assert(self.isObj());
-        return @intToPtr(*Obj, @intCast(usize, self.data & ~(SIGN_BIT | QNAN)));
+        return @as(*Obj, @ptrFromInt(@as(usize, @intCast(self.data & ~(SIGN_BIT | QNAN)))));
     }
 
     pub fn asObjType(self: NanTaggedValue, comptime objType: Obj.Type) *Obj.ObjType(objType) {
@@ -81,7 +81,7 @@ pub const NanTaggedValue = packed struct {
     }
 
     pub fn fromNumber(x: f64) NanTaggedValue {
-        return NanTaggedValue{ .data = @bitCast(u64, x) };
+        return NanTaggedValue{ .data = @as(u64, @bitCast(x)) };
     }
 
     pub fn fromBool(x: bool) NanTaggedValue {
@@ -89,7 +89,7 @@ pub const NanTaggedValue = packed struct {
     }
 
     pub fn fromObj(x: *Obj) NanTaggedValue {
-        return NanTaggedValue{ .data = SIGN_BIT | QNAN | @ptrToInt(x) };
+        return NanTaggedValue{ .data = SIGN_BIT | QNAN | @intFromPtr(x) };
     }
 
     pub fn nil() NanTaggedValue {
@@ -164,12 +164,12 @@ pub const PointerTaggedValue = packed struct {
 
     pub fn asNumber(self: PointerTaggedValue) f64 {
         std.debug.assert(self.isNumber());
-        return @bitCast(f64, self.data);
+        return @as(f64, @bitCast(self.data));
     }
 
     pub fn asInteger(self: PointerTaggedValue) u32 {
         std.debug.assert(self.isNumber());
-        return @floatToInt(u32, @bitCast(f64, self.data));
+        return @as(u32, @intFromFloat(@as(f64, @bitCast(self.data))));
     }
 
     pub fn asBool(self: PointerTaggedValue) bool {
@@ -179,7 +179,7 @@ pub const PointerTaggedValue = packed struct {
 
     pub fn asObj(self: PointerTaggedValue) *Obj {
         std.debug.assert(self.isObj());
-        return @intToPtr(*Obj, @intCast(usize, self.data & ~(SIGN_BIT | QNAN)));
+        return @as(*Obj, @ptrFromInt(@as(usize, @intCast(self.data & ~(SIGN_BIT | QNAN)))));
     }
 
     pub fn asObjType(self: PointerTaggedValue, comptime objType: Obj.Type) *Obj.ObjType(objType) {
@@ -187,7 +187,7 @@ pub const PointerTaggedValue = packed struct {
     }
 
     pub fn fromNumber(x: f64) PointerTaggedValue {
-        return PointerTaggedValue{ .data = @bitCast(u64, x) };
+        return PointerTaggedValue{ .data = @as(u64, @bitCast(x)) };
     }
 
     pub fn fromBool(x: bool) PointerTaggedValue {
@@ -195,7 +195,7 @@ pub const PointerTaggedValue = packed struct {
     }
 
     pub fn fromObj(x: *Obj) PointerTaggedValue {
-        return PointerTaggedValue{ .data = SIGN_BIT | QNAN | @ptrToInt(x) };
+        return PointerTaggedValue{ .data = SIGN_BIT | QNAN | @intFromPtr(x) };
     }
 
     pub fn nil() PointerTaggedValue {
@@ -268,7 +268,7 @@ pub const UnionValue = union(ValueType) {
 
     pub fn asInteger(self: UnionValue) u32 {
         std.debug.assert(self.isNumber());
-        return @floatToInt(u32, self.Number);
+        return @as(u32, @intFromFloat(self.Number));
     }
 
     pub fn asObj(self: UnionValue) *Obj {
@@ -369,7 +369,7 @@ fn printList(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
 
     const list = obj.asList();
     try writer.print("[", .{});
-    for (list.items.items) |item, i| {
+    for (list.items.items, 0..) |item, i| {
         try item.format("{}", .{}, writer);
         if (i + 1 == list.items.items.len) break;
         try writer.print(", ", .{});

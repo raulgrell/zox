@@ -18,8 +18,6 @@ pub export fn _wasm_main(input_ptr: [*]const u8, input_len: usize, output_ptr: *
     vm = VM.create();
     defer vm.destroy();
 
-    vm.defineNative("clock", clockNative);
-
     vm.interpret(input) catch {};
 
     const slice = vm.output.toSliceConst();
@@ -33,8 +31,8 @@ pub export fn _wasm_main(input_ptr: [*]const u8, input_len: usize, output_ptr: *
 }
 
 pub export fn _wasm_alloc(len: usize) u32 {
-    var buf = allocator.alloc(u8, len) catch |err| return 0;
-    return @intCast(u32, @ptrToInt(buf.ptr));
+    var buf = allocator.alloc(u8, len) catch return 0;
+    return @intCast(@intFromPtr(buf.ptr));
 }
 
 pub export fn _wasm_dealloc(ptr: [*]const u8, len: usize) void {

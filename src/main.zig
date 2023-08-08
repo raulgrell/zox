@@ -86,7 +86,7 @@ fn repl(allocator: Allocator) !void {
     try vm.init();
     defer vm.deinit();
 
-    try vm.defineNative("clock", lib.stdModule.sys.clock);
+    try vm.defineNative("clock", &lib.stdModule.sys.clock);
 
     while (true) {
         try stdout.print("> ", .{});
@@ -145,7 +145,7 @@ fn runSource(allocator: Allocator, source: []const u8) !void {
 }
 
 fn debugArgs(args: cli.ParseArgsResult(Spec, Verb)) void {
-    std.debug.print("{s}", .{args.executable_name});
+    std.debug.print("{?s}", .{args.executable_name});
     inline for (std.meta.fields(@TypeOf(args.options))) |fld| {
         std.debug.print(" --{s} {any}", .{ fld.name, @field(args.options, fld.name) });
     }
@@ -153,22 +153,7 @@ fn debugArgs(args: cli.ParseArgsResult(Spec, Verb)) void {
     if (args.verb) |v| {
         std.debug.print(" {s}", .{@tagName(v)});
         switch (v) {
-            .run => |opts| {
-                inline for (std.meta.fields(@TypeOf(opts))) |fld| {
-                    std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
-                }
-            },
-            .cmd => |opts| {
-                inline for (std.meta.fields(@TypeOf(opts))) |fld| {
-                    std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
-                }
-            },
-            .repl => |opts| {
-                inline for (std.meta.fields(@TypeOf(opts))) |fld| {
-                    std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
-                }
-            },
-            .@"test" => |opts| {
+            inline .run, .cmd, .repl, .@"test" => |opts| {
                 inline for (std.meta.fields(@TypeOf(opts))) |fld| {
                     std.debug.print(" --{s} {any}", .{ fld.name, @field(opts, fld.name) });
                 }
@@ -193,6 +178,7 @@ fn showUsage() !void {
         \\      repl [path]             # Open a repl
         \\      run  [path]             # Run a file
         \\      test [paths..]          # Test a file
+        \\
     , .{});
     std.process.exit(64);
 }

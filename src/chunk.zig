@@ -87,7 +87,7 @@ pub const Chunk = struct {
         if (self.lines.items.len == 0 or
             self.lines.items[self.lines.items.len - 1].line != line)
         {
-            try self.lines.append(Line{ .line = @intCast(u32, line), .offset = byte });
+            try self.lines.append(Line{ .line = @intCast(line), .offset = byte });
         }
     }
 
@@ -100,7 +100,7 @@ pub const Chunk = struct {
     }
 
     fn instructionAt(chunk: *const Chunk, offset: usize) OpCode {
-        return @intToEnum(OpCode, chunk.code.items[offset]);
+        return @enumFromInt(chunk.code.items[offset]);
     }
 
     pub fn getLine(chunk: *const Chunk, offset: usize) u32 {
@@ -204,12 +204,12 @@ pub const Chunk = struct {
     }
 
     fn jumpInstruction(comptime name: []const u8, sign: i32, chunk: *const Chunk, offset: usize) usize {
-        var jump = @intCast(i16, chunk.code.items[offset + 1]) << 8;
-        jump |= @intCast(i16, chunk.code.items[offset + 2]);
+        var jump = @as(i16, @intCast(chunk.code.items[offset + 1])) << 8;
+        jump |= @as(i16, @intCast(chunk.code.items[offset + 2]));
         std.debug.print("{s}: {} . {}\n", .{
             name,
             offset,
-            @intCast(i16, offset + 3) + sign * jump,
+            @as(i16, @intCast(offset + 3)) + sign * jump,
         });
         return offset + 3;
     }

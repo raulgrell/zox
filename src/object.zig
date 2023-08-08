@@ -41,7 +41,7 @@ pub const Obj = struct {
 
         tracy.Alloc(ptr, @sizeOf(T));
         if (debug.trace_gc) {
-            std.debug.print("{} allocate {} for {s}\n", .{ @ptrToInt(&ptr.obj), @sizeOf(T), @typeName(T) });
+            std.debug.print("{} allocate {} for {s}\n", .{ @intFromPtr(&ptr.obj), @sizeOf(T), @typeName(T) });
         }
 
         return &ptr.obj;
@@ -49,7 +49,7 @@ pub const Obj = struct {
 
     pub fn destroy(self: *Obj, vm: *VM) void {
         if (debug.trace_gc) {
-            std.debug.print("{} free {} {}\n", .{ @ptrToInt(self), self.objType, self.value() });
+            std.debug.print("{} free {} {}\n", .{ @intFromPtr(self), self.objType, self.value() });
         }
 
         switch (self.objType) {
@@ -290,7 +290,7 @@ pub const Obj = struct {
 
         pub fn destroy(self: *Closure, vm: *VM) void {
             vm.allocator.free(self.upvalues);
-            tracy.Free(self.upvalues.ptr);
+            tracy.Free(@ptrCast(self.upvalues.ptr));
 
             vm.allocator.destroy(self);
             tracy.Free(self);
@@ -417,11 +417,11 @@ pub const Obj = struct {
     pub const Native = struct {
         obj: Obj,
         name: *Obj.String,
-        function: Fn,
+        function: *const Fn,
 
         pub const Fn = fn (vm: *VM, args: []Value) error{RuntimeError}!Value;
 
-        pub fn create(vm: *VM, name: *Obj.String, function: Fn) !*Native {
+        pub fn create(vm: *VM, name: *Obj.String, function: *const Fn) !*Native {
             const t = tracy.Zone(@src());
             defer t.End();
 
