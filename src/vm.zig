@@ -13,7 +13,6 @@ const GCAllocator = @import("./memory.zig").GCAllocator;
 
 const config = @import("./config.zig");
 const debug = @import("./debug.zig");
-const tracy = @import("./tracy.zig");
 
 pub const CallFrame = struct {
     closure: *Obj.Closure,
@@ -104,9 +103,6 @@ pub const VM = struct {
     }
 
     pub fn interpret(self: *VM, source: []const u8) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         std.debug.assert(self.stack.items.len == 0);
         defer std.debug.assert(self.stack.items.len == 0);
 
@@ -145,9 +141,6 @@ pub const VM = struct {
     fn resetStack(self: *VM) void {
         self.stack.resize(0) catch unreachable;
         self.openUpvalues = null;
-
-        // TODO: Dictu
-        // self.instance.compiler = null;
     }
 
     pub fn freeObjects(self: *VM) void {
@@ -203,9 +196,6 @@ pub const VM = struct {
     }
 
     fn callValue(self: *VM, callee: Value, arg_count: u8) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (!callee.isObj()) return self.runtimeError("Can only call functions and classes.", .{});
         const o = callee.asObj();
         switch (o.objType) {
@@ -248,9 +238,6 @@ pub const VM = struct {
     }
 
     fn invokeFromClass(self: *VM, class: *Obj.Class, name: *Obj.String, arg_count: u8) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const method = class.methods.get(name) orelse {
             return self.runtimeError("Cannot invoke undefined property {s} in class {s}.", .{
                 name.bytes,
@@ -262,9 +249,6 @@ pub const VM = struct {
     }
 
     fn invoke(self: *VM, name: *Obj.String, arg_count: u8) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const receiver = self.peek(arg_count);
 
         if (!receiver.isObjType(.Instance)) {
@@ -281,9 +265,6 @@ pub const VM = struct {
     }
 
     fn bindMethod(self: *VM, class: *Obj.Class, name: *Obj.String) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const method = class.methods.get(name) orelse {
             return self.runtimeError("Cannot bind undefined property {s} in class {s}.", .{
                 name.bytes,
@@ -297,9 +278,6 @@ pub const VM = struct {
     }
 
     fn captureUpvalue(self: *VM, local: *Value) !*Obj.Upvalue {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (self.openUpvalues) |o| {
             var prevUpvalue: ?*Obj.Upvalue = null;
             var upvalue: ?*Obj.Upvalue = o;
@@ -327,9 +305,6 @@ pub const VM = struct {
     }
 
     fn closeUpvalues(self: *VM, last: *Value) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         while (self.openUpvalues) |u| {
             if (@intFromPtr(u.location) >= @intFromPtr(last)) {
                 u.closed = u.location.*;
@@ -340,9 +315,6 @@ pub const VM = struct {
     }
 
     fn call(self: *VM, closure: *Obj.Closure, arg_count: u8) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (arg_count != closure.function.arity) {
             return self.runtimeError("Expected {} arguments but got {}.", .{
                 closure.function.arity,
@@ -358,9 +330,6 @@ pub const VM = struct {
     }
 
     pub fn defineNative(self: *VM, name: []const u8, function: *const Obj.Native.Fn) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const string = try Obj.String.copy(self, name);
         const native = try Obj.Native.create(self, string, function);
         self.push(string.obj.value());
@@ -371,9 +340,6 @@ pub const VM = struct {
     }
 
     fn defineMethod(self: *VM, name: *Obj.String) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const method = self.peek(0);
         var class = self.peek(1).asObjType(.Class);
         _ = try class.methods.put(name, method);
@@ -381,9 +347,6 @@ pub const VM = struct {
     }
 
     fn createClass(self: *VM, name: *Obj.String, superclass: ?*Obj.Class) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const class = try Obj.Class.create(self, name, superclass);
         self.push(class.obj.value());
 
@@ -416,9 +379,6 @@ pub const VM = struct {
     }
 
     fn run(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         while (true) {
             comptime if (debug.trace_vm) self.printDebug();
             const op = @as(OpCode, @enumFromInt(self.currentFrame().readByte()));
@@ -473,63 +433,39 @@ pub const VM = struct {
     }
 
     fn runNil(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.push(Value.nil());
     }
 
     fn runTrue(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.push(Value.fromBool(true));
     }
 
     fn runFalse(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.push(Value.fromBool(false));
     }
 
     fn runPop(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         _ = self.pop();
     }
 
     fn runConstant(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const constant = self.currentFrame().readConstant();
         self.push(constant);
     }
 
     fn runGetLocal(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const slot = self.currentFrame().readByte();
         const local = self.stack.items[self.currentFrame().slots + slot];
         self.push(local);
     }
 
     fn runSetLocal(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const slot = self.currentFrame().readByte();
         const value = self.peek(0);
         self.stack.items[self.currentFrame().slots + slot] = value;
     }
 
     fn runDefineGlobal(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const name = self.currentFrame().readString();
         const value = self.peek(0);
         _ = try self.globals.put(name, value);
@@ -537,9 +473,6 @@ pub const VM = struct {
     }
 
     fn runGetGlobal(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const name = self.currentFrame().readString();
         var value = self.globals.get(name) orelse {
             return self.runtimeError("Undefined variable '{s}'.", .{name.bytes});
@@ -548,9 +481,6 @@ pub const VM = struct {
     }
 
     fn runSetGlobal(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const name = self.currentFrame().readString();
         const value = self.peek(0);
         _ = self.globals.put(name, value) catch {
@@ -559,52 +489,34 @@ pub const VM = struct {
     }
 
     fn runGetUpvalue(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const slot = self.currentFrame().readByte();
         self.push(self.currentFrame().closure.upvalues[slot].?.location.*);
     }
 
     fn runSetUpvalue(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const slot = self.currentFrame().readByte();
         self.currentFrame().closure.upvalues[slot].?.location.* = self.peek(0);
     }
 
     fn runGetSuper(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const name = self.currentFrame().readString();
         const superclass = self.pop();
         try self.bindMethod(superclass.asObjType(.Class), name);
     }
 
     fn runEqual(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const b = self.pop();
         const a = self.pop();
         self.push(Value.fromBool(a.equals(b)));
     }
 
     fn runNotEqual(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const b = self.pop();
         const a = self.pop();
         self.push(Value.fromBool(!a.equals(b)));
     }
 
     fn runBinaryMath(self: *VM, op: OpCode) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (!self.peek(1).isNumber() or !self.peek(0).isNumber()) {
             return self.runtimeError("Operands must be numbers", .{});
         }
@@ -624,9 +536,6 @@ pub const VM = struct {
     }
 
     fn runBinaryComparison(self: *VM, op: OpCode) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (!self.peek(1).isNumber() or !self.peek(0).isNumber()) {
             return self.runtimeError("Operands must be numbers", .{});
         }
@@ -645,9 +554,6 @@ pub const VM = struct {
     }
 
     fn runBinaryBool(self: *VM, op: OpCode) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (!self.peek(1).isBool() or !self.peek(0).isBool()) {
             return self.runtimeError("Operands must be boolean", .{});
         }
@@ -662,17 +568,11 @@ pub const VM = struct {
     }
 
     fn runNot(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const value = Value.fromBool(self.pop().isFalsey());
         self.push(value);
     }
 
     fn runNegate(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (!self.peek(0).isNumber())
             return self.runtimeError("Operand must be a number.", .{});
 
@@ -681,25 +581,16 @@ pub const VM = struct {
     }
 
     fn runPrint(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const stdout = std.io.getStdOut().writer();
         try stdout.print("{any}\n", .{self.pop()});
     }
 
     fn runNewList(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const list = try Obj.List.create(self);
         self.push(list.obj.value());
     }
 
     fn runAddList(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const itemValue = self.pop();
         const listValue = self.pop();
 
@@ -710,9 +601,6 @@ pub const VM = struct {
     }
 
     fn runSubscript(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const indexValue = self.pop();
         const listValue = self.pop();
 
@@ -728,9 +616,6 @@ pub const VM = struct {
     }
 
     fn runSubscriptAssign(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const listValue = self.peek(2);
         if (!listValue.isObj()) {
             return self.runtimeError("Can only subscript lists.", .{});
@@ -761,41 +646,26 @@ pub const VM = struct {
     }
 
     fn runJumpIfFalse(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const offset = self.currentFrame().readShort();
         if (self.peek(0).isFalsey()) self.currentFrame().ip += offset;
     }
 
     fn runJump(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const offset = self.currentFrame().readShort();
         self.currentFrame().ip += offset;
     }
 
     fn runLoop(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const offset = self.currentFrame().readShort();
         self.currentFrame().ip -= offset;
     }
 
     fn runCall(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const arg_count = self.currentFrame().readByte();
         try self.callValue(self.peek(arg_count), arg_count);
     }
 
     fn runInvoke(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const method = self.currentFrame().readString();
         const arg_count = self.currentFrame().readByte();
         self.invoke(method, arg_count) catch |err| {
@@ -804,9 +674,6 @@ pub const VM = struct {
     }
 
     fn runSuperInvoke(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const method = self.currentFrame().readString();
         const arg_count = self.currentFrame().readByte();
         const superclass = self.pop().asObjType(.Class);
@@ -814,9 +681,6 @@ pub const VM = struct {
     }
 
     fn runClosure(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const function = self.currentFrame().readConstant().asObj().asFunction();
         var closure = try Obj.Closure.create(self, function);
         self.push(closure.obj.value());
@@ -832,17 +696,11 @@ pub const VM = struct {
     }
 
     fn runCloseUpvalue(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.closeUpvalues(&self.stack.items[self.stack.items.len - 2]);
         _ = self.pop();
     }
 
     fn runReturn(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const result = self.pop();
         const frame = self.frames.pop();
 
@@ -856,16 +714,10 @@ pub const VM = struct {
     }
 
     fn runClass(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         try self.createClass(self.currentFrame().readString(), null);
     }
 
     fn runSubclass(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const superclass = self.peek(0);
         if (superclass.Obj.data != .Class) {
             return self.runtimeError("Superclass must be a class", .{});
@@ -874,9 +726,6 @@ pub const VM = struct {
     }
 
     fn runInherit(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const superclassObject = self.peek(1);
         if (!superclassObject.isObjType(.Class))
             return self.runtimeError("Superclass must be a class.", .{});
@@ -894,16 +743,10 @@ pub const VM = struct {
     }
 
     fn runMethod(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         try self.defineMethod(self.currentFrame().readString());
     }
 
     fn runGetProperty(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const val = self.peek(0);
         if (!val.isObjType(.Instance)) {
             return self.runtimeError("Only instances have properties.", .{});
@@ -921,9 +764,6 @@ pub const VM = struct {
     }
 
     fn runSetProperty(self: *VM) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const val = self.peek(1);
         if (!val.isObjType(.Instance)) {
             return self.runtimeError("Only instances have properties.", .{});

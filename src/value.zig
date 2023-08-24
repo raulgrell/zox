@@ -3,7 +3,6 @@ const Obj = @import("./object.zig").Obj;
 
 const config = @import("./config.zig");
 const debug = @import("./debug.zig");
-const tracy = @import("./tracy.zig");
 
 pub const Value = if (config.nanTagging) NanTaggedValue else UnionValue;
 
@@ -340,9 +339,6 @@ pub const UnionValue = union(ValueType) {
 
 // Shared between the two value representations
 fn printObject(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     switch (obj.objType) {
         .String => try printString(obj, writer),
         .List => try printList(obj, writer),
@@ -357,16 +353,10 @@ fn printObject(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
 }
 
 fn printString(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     try writer.print("{s}", .{obj.asString().bytes});
 }
 
 fn printList(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     const list = obj.asList();
     try writer.print("[", .{});
     for (list.items.items, 0..) |item, i| {
@@ -378,55 +368,34 @@ fn printList(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
 }
 
 fn printFunction(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     const name = if (obj.asFunction().name) |str| str.bytes else "<script>";
     try writer.print("<fn {s}>", .{name});
 }
 
 fn printNative(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     const func = obj.asNative();
     try writer.print("<native fn {s}>", .{func.name.bytes});
 }
 
 fn printClosure(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     const name = if (obj.asClosure().function.name) |str| str.bytes else "<script>";
     try writer.print("<fn {s}>", .{name});
 }
 
 fn printUpvalue(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     const val = obj.asUpvalue().location;
     try writer.print("upvalue {}", .{val});
 }
 
 fn printClass(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     try writer.print("{s}", .{obj.asClass().name.bytes});
 }
 
 fn printInstance(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     try writer.print("{s} instance", .{obj.asInstance().class.name.bytes});
 }
 
 fn printBoundMethod(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    const t = tracy.Zone(@src());
-    defer t.End();
-
     const name = if (obj.asBoundMethod().method.function.name) |str| str.bytes else "<script>";
     try writer.print("<fn {s}>", .{name});
 }

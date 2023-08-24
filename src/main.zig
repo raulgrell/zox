@@ -10,8 +10,6 @@ const lib = @import("./lib.zig");
 const debug = @import("./debug.zig");
 const cli = @import("./deps/args.zig");
 
-const tracy_enabled = false;
-
 const Spec = struct {
     debug: bool = false,
     pub const shorthands = .{

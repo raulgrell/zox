@@ -1,5 +1,4 @@
 const std = @import("std");
-const tracy = @import("./build_tracy.zig");
 
 const Builder = std.build.Builder;
 
@@ -13,7 +12,6 @@ pub fn build(b: *Builder) void {
         .target = target,
         .optimize = optimize,
     });
-    tracy.link(b, exe, "./tracy");
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

@@ -7,8 +7,6 @@ const ValueType = @import("value.zig").ValueType;
 const Chunk = @import("chunk.zig").Chunk;
 const Compiler = @import("compiler.zig").Compiler;
 
-const tracy = @import("./tracy.zig");
-
 pub const Obj = struct {
     objType: Type,
     next: ?*Obj,
@@ -39,7 +37,6 @@ pub const Obj = struct {
 
         vm.objects = &ptr.obj;
 
-        tracy.Alloc(ptr, @sizeOf(T));
         if (debug.trace_gc) {
             std.debug.print("{} allocate {} for {s}\n", .{ @intFromPtr(&ptr.obj), @sizeOf(T), @typeName(T) });
         }
@@ -143,9 +140,6 @@ pub const Obj = struct {
     }
 
     pub fn toString(self: *Obj) []const u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         switch (self.objType) {
             .Instance => {
                 return self.asInstance().class.name.bytes;
@@ -185,21 +179,15 @@ pub const Obj = struct {
         bytes: []const u8,
 
         pub fn destroy(self: *String, vm: *VM) void {
-            tracy.Free(self);
-
             vm.allocator.free(self.bytes);
             vm.allocator.destroy(self);
         }
 
         pub fn copy(vm: *VM, bytes: []const u8) !*String {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const interned = vm.strings.get(bytes);
             if (interned) |s| return s;
 
             const heapChars = try vm.allocator.alloc(u8, bytes.len);
-            tracy.Alloc(heapChars.ptr, heapChars.len);
 
             std.mem.copy(u8, heapChars, bytes);
 
@@ -207,9 +195,6 @@ pub const Obj = struct {
         }
 
         pub fn take(vm: *VM, bytes: []const u8) !*String {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const interned = vm.strings.get(bytes);
             if (interned) |s| {
                 vm.allocator.free(bytes);
@@ -220,9 +205,6 @@ pub const Obj = struct {
         }
 
         fn allocate(vm: *VM, bytes: []const u8) !*String {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const obj = try Obj.create(vm, String, .String);
             const string = obj.asString();
             string.bytes = bytes;
@@ -242,9 +224,6 @@ pub const Obj = struct {
         next: ?*Upvalue,
 
         pub fn create(vm: *VM, location: *Value, next: ?*Upvalue) !*Upvalue {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             _ = next;
             const obj = try Obj.create(vm, Upvalue, .Upvalue);
             const upvalue = obj.asUpvalue();
@@ -259,8 +238,6 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *Upvalue, vm: *VM) void {
-            tracy.Free(self);
-
             vm.allocator.destroy(self);
         }
     };
@@ -271,9 +248,6 @@ pub const Obj = struct {
         upvalues: []?*Upvalue,
 
         pub fn create(vm: *VM, function: *Function) !*Closure {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const upvalues = try vm.allocator.alloc(?*Upvalue, function.upvalueCount);
             for (upvalues) |*upvalue| upvalue.* = null;
 
@@ -290,10 +264,7 @@ pub const Obj = struct {
 
         pub fn destroy(self: *Closure, vm: *VM) void {
             vm.allocator.free(self.upvalues);
-            tracy.Free(@ptrCast(self.upvalues.ptr));
-
             vm.allocator.destroy(self);
-            tracy.Free(self);
         }
     };
 
@@ -304,9 +275,6 @@ pub const Obj = struct {
         methods: std.AutoHashMap(*String, Value),
 
         pub fn create(vm: *VM, name: *String, superclass: ?*Class) !*Class {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const obj = try Obj.create(vm, Class, .Class);
             const class = obj.asClass();
             class.* = Class{
@@ -320,8 +288,6 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *Class, vm: *VM) void {
-            tracy.Free(self);
-
             self.methods.deinit();
             vm.allocator.destroy(self);
         }
@@ -333,9 +299,6 @@ pub const Obj = struct {
         fields: std.AutoHashMap(*String, Value),
 
         pub fn create(vm: *VM, class: *Class) !*Instance {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const obj = try Obj.create(vm, Instance, .Instance);
             const instance = obj.asInstance();
             instance.* = Instance{
@@ -348,8 +311,6 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *Instance, vm: *VM) void {
-            tracy.Free(self);
-
             self.fields.deinit();
             vm.allocator.destroy(self);
         }
@@ -361,9 +322,6 @@ pub const Obj = struct {
         method: *Closure,
 
         pub fn create(vm: *VM, receiver: Value, method: *Closure) !*BoundMethod {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const obj = try Obj.create(vm, BoundMethod, .BoundMethod);
             const bound = obj.asBoundMethod();
             bound.* = BoundMethod{
@@ -376,8 +334,6 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *BoundMethod, vm: *VM) void {
-            tracy.Free(self);
-
             vm.allocator.destroy(self);
         }
     };
@@ -390,9 +346,6 @@ pub const Obj = struct {
         name: ?*Obj.String,
 
         pub fn create(vm: *VM) !*Function {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const obj = try Obj.create(vm, Function, .Function);
             const func = obj.asFunction();
             func.* = Function{
@@ -407,8 +360,6 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *Function, vm: *VM) void {
-            tracy.Free(self);
-
             self.chunk.deinit();
             vm.allocator.destroy(self);
         }
@@ -422,9 +373,6 @@ pub const Obj = struct {
         pub const Fn = fn (vm: *VM, args: []Value) error{RuntimeError}!Value;
 
         pub fn create(vm: *VM, name: *Obj.String, function: *const Fn) !*Native {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const obj = try Obj.create(vm, Native, .Native);
             const native = obj.asNative();
             native.* = Native{
@@ -436,8 +384,6 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *Native, vm: *VM) void {
-            tracy.Free(self);
-
             vm.allocator.destroy(self);
         }
     };
@@ -447,9 +393,6 @@ pub const Obj = struct {
         items: std.ArrayList(Value),
 
         pub fn create(vm: *VM) !*List {
-            const t = tracy.Zone(@src());
-            defer t.End();
-
             const obj = try Obj.create(vm, List, .List);
             const list = obj.asList();
             list.* = List{
@@ -460,8 +403,6 @@ pub const Obj = struct {
         }
 
         pub fn destroy(self: *List, vm: *VM) void {
-            tracy.Free(self);
-
             vm.allocator.destroy(self);
         }
     };

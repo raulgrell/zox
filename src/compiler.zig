@@ -10,7 +10,6 @@ const Value = @import("./value.zig").Value;
 const VM = @import("./vm.zig").VM;
 
 const debug = @import("./debug.zig");
-const tracy = @import("./tracy.zig");
 
 pub const Parser = struct {
     scanner: Scanner,
@@ -28,9 +27,6 @@ pub const Parser = struct {
     }
 
     fn advance(self: *Parser) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.previous = self.current;
 
         while (true) {
@@ -41,9 +37,6 @@ pub const Parser = struct {
     }
 
     fn consume(self: *Parser, token_type: TokenType, message: []const u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (self.current.token_type == token_type) {
             _ = self.advance();
             return;
@@ -53,39 +46,24 @@ pub const Parser = struct {
     }
 
     fn match(self: *Parser, token_type: TokenType) bool {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (!self.check(token_type)) return false;
         self.advance();
         return true;
     }
 
     fn check(self: *Parser, token_type: TokenType) bool {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         return self.current.token_type == token_type;
     }
 
     fn errorAtCurrent(self: *Parser, message: []const u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.errorAt(&self.current, message);
     }
 
     fn errorAtPrevious(self: *Parser, message: []const u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.errorAt(&self.previous, message);
     }
 
     fn errorAt(self: *Parser, token: *Token, message: []const u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (self.had_panic) return;
         self.had_panic = true;
 
@@ -227,9 +205,6 @@ pub const Compiler = struct {
     }
 
     pub fn init(self: *Compiler, context: *Context) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         context.current = self;
 
         switch (self.T) {
@@ -250,9 +225,6 @@ pub const Compiler = struct {
     }
 
     pub fn deinit(self: *Compiler) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.locals.deinit();
         self.upvalues.deinit();
     }
@@ -288,9 +260,6 @@ pub const Context = struct {
     const Error = error{ CompileError, RuntimeError, OutOfMemory };
 
     pub fn compile(self: *Context, vm: *VM, source: []const u8) !*Obj.Function {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         var compiler = try Compiler.create(vm, null, 0, .TopLevel);
         try compiler.init(self);
         defer compiler.deinit();
@@ -310,9 +279,6 @@ pub const Context = struct {
     }
 
     fn end(self: *Context) !*Obj.Function {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.emitReturn();
 
         if (self.parser.had_error)
@@ -369,29 +335,22 @@ pub const Context = struct {
     }
 
     fn withStatement(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         _ = self;
     }
+
     fn breakStatement(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         _ = self;
     }
+
     fn continueStatement(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         _ = self;
     }
+
     fn forStatement(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         _ = self;
     }
 
     fn printStatement(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         if (debug.trace_parser) std.debug.print("S | Print\n", .{});
         self.expression();
         self.parser.consume(.Semicolon, "Expect ';' after value.");
@@ -399,8 +358,6 @@ pub const Context = struct {
     }
 
     fn ifStatement(self: *Context) Error!void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         if (debug.trace_parser) std.debug.print("S | If\n", .{});
         self.parser.consume(.LeftParen, "Expect '(' after if.");
         self.expression();
@@ -420,8 +377,6 @@ pub const Context = struct {
     }
 
     fn returnStatement(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         if (debug.trace_parser) std.debug.print("S | Return\n", .{});
 
         if (self.current.T == .TopLevel) {
@@ -441,8 +396,6 @@ pub const Context = struct {
     }
 
     fn patchJump(self: *Context, offset: usize) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         const jump = self.current.chunk().code.items.len - offset - 2;
         if (jump > std.math.maxInt(u16)) {
             self.parser.errorAtPrevious("Too much code to jump over");
@@ -452,8 +405,6 @@ pub const Context = struct {
     }
 
     fn whileStatement(self: *Context) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         if (debug.trace_parser)
             std.debug.print("S | While\n", .{});
 
@@ -485,20 +436,14 @@ pub const Context = struct {
     }
 
     fn expression(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         self.parsePrecedence(Precedence.Assignment);
     }
 
     fn beginScope(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         self.current.scope_depth += 1;
     }
 
     fn endScope(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         self.current.scope_depth -= 1;
         while (self.current.locals.popOrNull()) |l| {
             if (l.depth <= self.current.scope_depth) break;
@@ -511,8 +456,6 @@ pub const Context = struct {
     }
 
     fn block(self: *Context) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         while (!(self.parser.check(.RightBrace) or self.parser.check(.EOF))) {
             try self.declaration();
         }
@@ -521,8 +464,6 @@ pub const Context = struct {
     }
 
     fn expressionStatement(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         if (debug.trace_parser) std.debug.print("S | Expression\n", .{});
         self.expression();
         self.emitOp(self.current, .Pop);
@@ -530,8 +471,6 @@ pub const Context = struct {
     }
 
     fn declaration(self: *Context) Error!void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         if (self.parser.match(.Class)) {
             try self.classDeclaration();
         } else if (self.parser.match(.Fn)) {
@@ -550,8 +489,6 @@ pub const Context = struct {
     }
 
     fn synchronize(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
         self.parser.had_panic = false;
 
         while (self.parser.current.token_type != .EOF) {
@@ -567,9 +504,6 @@ pub const Context = struct {
     }
 
     fn classDeclaration(self: *Context) Error!void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (debug.trace_parser) std.debug.print("S | Class\n", .{});
         self.parser.consume(.Identifier, "Expect class name.");
 
@@ -620,9 +554,6 @@ pub const Context = struct {
     }
 
     fn method(self: *Context) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (debug.trace_parser) std.debug.print("S | Method\n", .{});
 
         var T: FunctionType = undefined;
@@ -647,9 +578,6 @@ pub const Context = struct {
     }
 
     fn fnDeclaration(self: *Context) Error!void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (debug.trace_parser) std.debug.print("S | Function\n", .{});
         const global = try self.parseVariable("Expect function name.");
         self.markInitialized(); // should this be here?
@@ -658,9 +586,6 @@ pub const Context = struct {
     }
 
     fn function(self: *Context, fn_type: FunctionType) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         var compiler = try Compiler.create(self.vm, self.current, self.current.scope_depth, fn_type);
 
         try compiler.init(self);
@@ -700,9 +625,6 @@ pub const Context = struct {
     }
 
     fn constDeclaration(self: *Context) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const global = try self.parseVariable("Expect variable name.");
         if (debug.trace_parser) std.debug.print("K | Const\n", .{});
         if (self.parser.match(.Colon)) self.varType("Expect type name  after ':'.");
@@ -713,9 +635,6 @@ pub const Context = struct {
     }
 
     fn varDeclaration(self: *Context) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const global = try self.parseVariable("Expect variable name.");
         if (debug.trace_parser) std.debug.print("K | Var\n", .{});
         if (self.parser.match(.Colon)) self.varType("Expect type name after ':'.");
@@ -729,9 +648,6 @@ pub const Context = struct {
     }
 
     fn parseVariable(self: *Context, errorMessage: []const u8) !u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.parser.consume(.Identifier, errorMessage);
         try self.declareVariable();
         if (self.current.scope_depth > 0) return 0;
@@ -739,16 +655,10 @@ pub const Context = struct {
     }
 
     fn varType(self: *Context, errorMessage: []const u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.parser.consume(.Identifier, errorMessage);
     }
 
     fn declareVariable(self: *Context) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         // Global variables are implicitly declared.
         if (self.current.scope_depth == 0) return;
 
@@ -768,33 +678,21 @@ pub const Context = struct {
     }
 
     fn identifiersEqual(a: Token, b: Token) bool {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         return std.mem.eql(u8, a.lexeme, b.lexeme);
     }
 
     fn identifierConstant(self: *Context, name: Token) Error!u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         const obj_string = try Obj.String.copy(self.vm, name.lexeme);
         return self.makeConstant(self.current, obj_string.obj.value());
     }
 
     fn markInitialized(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (self.current.scope_depth == 0) return;
         const local_index = @as(u8, @intCast(self.current.locals.items.len - 1));
         self.current.locals.items[local_index].depth = @as(i32, @intCast(self.current.scope_depth));
     }
 
     fn defineVariable(self: *Context, global: u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (self.current.scope_depth > 0) {
             self.markInitialized();
             return;
@@ -803,9 +701,6 @@ pub const Context = struct {
     }
 
     fn addLocal(self: *Context, name: Token) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (self.current.locals.items.len == 255) {
             self.parser.errorAtPrevious("Too many local variables in function.");
             return;
@@ -815,9 +710,6 @@ pub const Context = struct {
     }
 
     fn resolveLocal(self: *Context, compiler: *Compiler, name: Token) ?u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         var i: i32 = @as(i32, @intCast(compiler.locals.items.len)) - 1;
         while (i >= 0) : (i -= 1) {
             const local_index = @as(u8, @intCast(i));
@@ -833,9 +725,6 @@ pub const Context = struct {
     }
 
     fn addUpvalue(self: *Context, compiler: *Compiler, index: u8, isLocal: bool) !u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         for (compiler.upvalues.items, 0..) |u, i| {
             if (u.index == index and u.isLocal == isLocal) {
                 return @as(u8, @intCast(i));
@@ -854,9 +743,6 @@ pub const Context = struct {
     }
 
     fn resolveUpvalue(self: *Context, compiler: *Compiler, name: Token) ?u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (compiler.enclosing == null)
             return null;
 
@@ -871,9 +757,6 @@ pub const Context = struct {
     }
 
     fn parsePrecedence(self: *Context, precedence: Precedence) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         _ = self.parser.advance();
 
         const parsePrefix = getRule(self.parser.previous.token_type).prefix;
@@ -909,29 +792,18 @@ pub const Context = struct {
         }
     }
 
-    fn grouping(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn grouping(self: *Context, _: bool) void {
         self.expression();
         self.parser.consume(.RightParen, "Expect ')' after expression.");
     }
 
-    fn call(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn call(self: *Context, _: bool) void {
         const arg_count = self.argumentList();
         self.emitOp(self.current, .Call);
         self.emitByte(self.current, arg_count);
     }
 
     fn dot(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.parser.consume(.Identifier, "Expect property name after '.'.");
         const name = self.identifierConstant(self.parser.previous) catch unreachable;
         if (canAssign and self.parser.match(.Equal)) {
@@ -947,9 +819,6 @@ pub const Context = struct {
     }
 
     fn argumentList(self: *Context) u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         var arg_count: u8 = 0;
         if (!self.parser.check(.RightParen)) {
             arg_count += 1;
@@ -967,20 +836,12 @@ pub const Context = struct {
         return arg_count;
     }
 
-    fn number(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn number(self: *Context, _: bool) void {
         const value = std.fmt.parseUnsigned(u8, self.parser.previous.lexeme, 10) catch unreachable;
         self.emitConstant(self.current, Value.fromNumber(@as(f64, @floatFromInt(value))));
     }
 
-    fn unary(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn unary(self: *Context, _: bool) void {
         const operator_type = self.parser.previous.token_type;
 
         // Compile the operand.
@@ -994,12 +855,7 @@ pub const Context = struct {
         }
     }
 
-    fn binary(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
-
+    fn binary(self: *Context, _: bool) void {
         // Remember the operator.
         const operator_type = self.parser.previous.token_type;
 
@@ -1032,11 +888,7 @@ pub const Context = struct {
         }
     }
 
-    fn literal(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn literal(self: *Context, _: bool) void {
         switch (self.parser.previous.token_type) {
             .Nil => self.emitOp(self.current, .Nil),
             .False => self.emitOp(self.current, .False),
@@ -1045,11 +897,7 @@ pub const Context = struct {
         }
     }
 
-    fn list(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn list(self: *Context, _: bool) void {
         self.emitOp(self.current, .NewList);
         while (true) {
             if (self.parser.check(.RightBracket)) break;
@@ -1061,11 +909,7 @@ pub const Context = struct {
         self.parser.consume(.RightBracket, "Expected closing ']'");
     }
 
-    fn subscript(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn subscript(self: *Context, _: bool) void {
         self.expression();
         self.parser.consume(.RightBracket, "Expected closing ']'");
         if (self.parser.match(.Equal)) {
@@ -1077,17 +921,10 @@ pub const Context = struct {
     }
 
     fn variable(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.namedVariable(self.parser.previous, canAssign) catch unreachable;
     }
 
-    fn super(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn super(self: *Context, _: bool) void {
         if (self.currentClass) |class| {
             if (!class.hasSuperclass) {
                 self.parser.errorAtPrevious("Cannot use 'super' in a class with no superclass.");
@@ -1112,18 +949,11 @@ pub const Context = struct {
         }
     }
 
-    fn this(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn this(self: *Context, _: bool) void {
         self.variable(false);
     }
 
     fn namedVariable(self: *Context, name: Token, canAssign: bool) !void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         var arg: u8 = undefined;
         var getOp: OpCode = undefined;
         var setOp: OpCode = undefined;
@@ -1150,22 +980,13 @@ pub const Context = struct {
         }
     }
 
-    fn string(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
+    fn string(self: *Context, _: bool) void {
         const lexeme = self.parser.previous.lexeme;
         const str = Obj.String.copy(self.vm, lexeme[0..]) catch unreachable;
         self.emitConstant(self.current, str.obj.value());
     }
 
-    fn orFn(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
-
+    fn orFn(self: *Context, _: bool) void {
         const elseJump = self.emitJump(.JumpIfFalse);
         const endJump = self.emitJump(.Jump);
 
@@ -1176,12 +997,7 @@ pub const Context = struct {
         self.patchJump(endJump);
     }
 
-    fn andFn(self: *Context, canAssign: bool) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
-        _ = canAssign;
-
+    fn andFn(self: *Context, _: bool) void {
         const endJump = self.emitJump(.JumpIfFalse);
 
         self.emitOp(self.current, .Pop);
@@ -1191,9 +1007,6 @@ pub const Context = struct {
     }
 
     fn emitJump(self: *Context, op: OpCode) usize {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.emitOp(self.current, op);
         self.emitByte(self.current, '\xFF');
         self.emitByte(self.current, '\xFF');
@@ -1202,9 +1015,6 @@ pub const Context = struct {
     }
 
     fn emitLoop(self: *Context, loopStart: i32) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.emitOp(self.current, .Loop);
         const count = @as(i32, @intCast(self.current.chunk().code.items.len));
         const offset = @as(u16, @intCast(count - loopStart + 2));
@@ -1215,9 +1025,6 @@ pub const Context = struct {
     }
 
     fn emitReturn(self: *Context) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         if (self.current.T == .Initializer) {
             // An initializer automatically returns "this".
             self.emitOp(self.current, .GetLocal);
@@ -1230,46 +1037,29 @@ pub const Context = struct {
     }
 
     fn emitByte(self: *Context, compiler: *Compiler, byte: u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         compiler.chunk().write(byte, self.parser.previous.line) catch unreachable;
     }
 
     fn emitOp(self: *Context, compiler: *Compiler, op: OpCode) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.emitByte(compiler, @intFromEnum(op));
     }
 
     fn emitUnaryOp(self: *Context, compiler: *Compiler, op: OpCode, byte: u8) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.emitByte(compiler, @intFromEnum(op));
         self.emitByte(compiler, byte);
     }
 
     fn emitConstant(self: *Context, compiler: *Compiler, value: Value) void {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.emitUnaryOp(compiler, .Constant, self.makeConstant(compiler, value));
     }
 
     fn makeConstant(self: *Context, compiler: *Compiler, value: Value) u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
 
         //TODO: Constant limit
         return self.addConstant(compiler, value);
     }
 
     pub fn addConstant(self: *Context, compiler: *Compiler, value: Value) u8 {
-        const t = tracy.Zone(@src());
-        defer t.End();
-
         self.vm.push(value);
         compiler.chunk().constants.append(value) catch unreachable;
         _ = self.vm.pop();
