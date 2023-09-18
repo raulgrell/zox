@@ -140,32 +140,16 @@ pub const Obj = struct {
     }
 
     pub fn toString(self: *Obj) []const u8 {
-        switch (self.objType) {
-            .Instance => {
-                return self.asInstance().class.name.bytes;
-            },
-            .BoundMethod => {
-                return self.asBoundMethod().method.function.name.?.bytes;
-            },
-            .Class => {
-                return self.asClass().name.bytes;
-            },
-            .Upvalue => {
-                return "Upvalue";
-            },
-            .Closure => {
-                return "Closure";
-            },
-            .Function => {
-                return if (self.asFunction().name) |n| n.bytes else "Function";
-            },
-            .Native => {
-                return "Native";
-            },
-            .String => {
-                return self.asString().bytes;
-            },
-        }
+        return switch (self.objType) {
+            .Instance => self.asInstance().class.name.bytes,
+            .BoundMethod => self.asBoundMethod().method.function.name.?.bytes,
+            .Class => self.asClass().name.bytes,
+            .Upvalue => "Upvalue",
+            .Closure => "Closure",
+            .Function => if (self.asFunction().name) |n| n.bytes else "Function",
+            .Native => "Native",
+            .String => self.asString().bytes,
+        };
     }
 
     pub fn equal(self: *const Obj, other: *const Obj) bool {
@@ -188,9 +172,7 @@ pub const Obj = struct {
             if (interned) |s| return s;
 
             const heapChars = try vm.allocator.alloc(u8, bytes.len);
-
             std.mem.copy(u8, heapChars, bytes);
-
             return allocate(vm, heapChars);
         }
 
@@ -221,7 +203,7 @@ pub const Obj = struct {
         obj: Obj,
         location: *Value,
         closed: Value,
-        next: ?*Upvalue,
+        next: ?*Upvalue = null,
 
         pub fn create(vm: *VM, location: *Value, next: ?*Upvalue) !*Upvalue {
             _ = next;
@@ -231,7 +213,6 @@ pub const Obj = struct {
                 .obj = obj.*,
                 .location = location,
                 .closed = Value.nil(),
-                .next = null,
             };
 
             return upvalue;
@@ -340,19 +321,16 @@ pub const Obj = struct {
 
     pub const Function = struct {
         obj: Obj,
-        arity: u8,
-        upvalueCount: u8,
+        arity: u8 = 0,
+        upvalueCount: u8 = 0,
         chunk: Chunk,
-        name: ?*Obj.String,
+        name: ?*Obj.String = null,
 
         pub fn create(vm: *VM) !*Function {
             const obj = try Obj.create(vm, Function, .Function);
             const func = obj.asFunction();
             func.* = Function{
                 .obj = obj.*,
-                .arity = 0,
-                .upvalueCount = 0,
-                .name = null,
                 .chunk = Chunk.init(vm.allocator),
             };
 

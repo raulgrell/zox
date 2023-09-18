@@ -1,28 +1,34 @@
 const std = @import("std");
 const VM = @import("../vm.zig").VM;
-const Value = @import("../vm.zig").Value;
+const Value = @import("../value.zig").Value;
 const Obj = @import("../object.zig").Obj;
+const NativeBinding = @import("../vm.zig").NativeBinding;
 
-fn len(vm: *VM, args: []Value) Value {
-    if (args.len != 0) {
-        return vm.runtimeError("len() takes no arguments ({} given)", .{args.len});
-    }
+const natives = [_]NativeBinding{
+    .{ .name = "len", .function = len },
+    .{ .name = "parseFloat", .function = parseFloat },
+};
 
-    const string = args[0].asObjType(.String);
-    return Value.fromNumber(string.bytes.len);
+pub fn defineAllNatives(vm: *VM) !void {
+    for (natives) |n| try vm.defineNative(n.name, n.function);
 }
 
-fn toNumber(vm: *VM, args: []Value) Value {
-    if (args.len != 0) {
-        return vm.runtimeError("toNumber() takes no arguments ({} given).", .{args.len});
+fn len(vm: *VM, args: []Value) !Value {
+    if (args.len != 2) {
+        return vm.runtimeError("len() takes 1 argument ({} given)", .{args.len - 1});
     }
 
-    const numberString = args[0].asObjType(.String);
-    _ = numberString;
-    
-    const number = 0;
-    // Impl
+    const string = args[1].asObjType(.String);
+    return Value.fromNumber(@floatFromInt(string.bytes.len));
+}
 
+fn parseFloat(vm: *VM, args: []Value) !Value {
+    if (args.len != 2) {
+        return vm.runtimeError("parseFloat() takes 1 argument ({} given).", .{args.len - 1});
+    }
+
+    const string = args[1].asObjType(.String);
+    const number = std.fmt.parseFloat(f64, string.bytes) catch return error.RuntimeError;
     return Value.fromNumber(number);
 }
 
@@ -31,10 +37,12 @@ fn format(vm: *VM, args: []Value) Value {
         return vm.runtimeError("format() takes at least 1 argument ({} given)", .{args.len});
     }
 
+    const fmt = args[1].asObjType(.String);
+    _ = fmt;
+
     const replaceStrings = Obj.String.copy(vm, []const u8, .{args.len});
     _ = replaceStrings;
 
-    // impl
     const newStr = "";
     return Value.fromObj(Obj.String.take(vm, newStr));
 }
@@ -98,8 +106,6 @@ fn find(vm: *VM, args: []Value) Value {
     _ = substr;
     _ = string;
 
-    // Impl
-
     return Value.fromNumber(0);
 }
 
@@ -133,8 +139,6 @@ fn lower(vm: *VM, args: []Value) Value {
     const string = args[0].asObjType(.String);
     const temp = Obj.String.copy(vm, string);
 
-    // Impl
-
     return Value.fromObj(Obj.String.take(vm, temp));
 }
 
@@ -145,8 +149,6 @@ fn upper(vm: *VM, args: []Value) Value {
 
     const string = args[0].asObjType(.String);
     const temp = Obj.String.copy(vm, string);
-
-    // Impl
 
     return Value.fromObj(Obj.String.take(vm, temp));
 }
@@ -163,8 +165,6 @@ fn startsWith(vm: *VM, args: []Value) Value {
     const string = args[0].asObjType(.String);
     const start = args[1].asObjType(.String);
 
-    // Impl
-
     return Value.fromBool(std.mem.startsWith(u8, string, start));
 }
 
@@ -180,8 +180,6 @@ fn endsWith(vm: *VM, args: []Value) Value {
     const string = args[0].asObjType(.String);
     const suffix = args[1].asObjType(.String);
 
-    // Impl
-
     return Value.fromBool(std.mem.endsWith(u8, string, suffix.bytes));
 }
 
@@ -193,8 +191,6 @@ fn leftTrim(vm: *VM, args: []Value) Value {
     const string = args[0].asObjType(.String);
     const temp = Obj.String.copy(vm, string);
 
-    // Impl
-
     return Value.fromObj(Obj.String.take(vm, temp));
 }
 
@@ -205,8 +201,6 @@ fn rightTrim(vm: *VM, args: []Value) Value {
 
     const string = args[0].asObjType(.String);
     const temp = Obj.String.copy(vm, string);
-
-    // Impl
 
     return Value.fromObj(Obj.String.take(vm, temp));
 }
@@ -232,24 +226,5 @@ fn count(vm: *VM, args: []Value) Value {
         return vm.runtimeError("Argument passed to count() must be a string");
     }
 
-    // Impl
-
     return Value.fromNumber(count);
-}
-
-fn declareStringMethods(vm: *VM) void {
-    vm.defineNative(&vm.stringMethods, "len", len);
-    vm.defineNative(&vm.stringMethods, "format", format);
-    vm.defineNative(&vm.stringMethods, "split", split);
-    vm.defineNative(&vm.stringMethods, "contains", contains);
-    vm.defineNative(&vm.stringMethods, "find", find);
-    vm.defineNative(&vm.stringMethods, "replace", replace);
-    vm.defineNative(&vm.stringMethods, "lower", lower);
-    vm.defineNative(&vm.stringMethods, "upper", upper);
-    vm.defineNative(&vm.stringMethods, "startsWith", startsWith);
-    vm.defineNative(&vm.stringMethods, "endsWith", endsWith);
-    vm.defineNative(&vm.stringMethods, "leftTrim", leftTrim);
-    vm.defineNative(&vm.stringMethods, "rightTrim", rightTrim);
-    vm.defineNative(&vm.stringMethods, "trim", trim);
-    vm.defineNative(&vm.stringMethods, "count", count);
 }

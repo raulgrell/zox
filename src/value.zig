@@ -19,9 +19,9 @@ pub const NanTaggedValue = packed struct {
     const SIGN_BIT: u64 = 0x8000000000000000;
     const QNAN: u64 = 0x7ffc000000000000;
 
-    const TAG_NIL = 0b01;
-    const TAG_FALSE = 0b10;
-    const TAG_TRUE = 0b11;
+    const TAG_NIL = 0b001;
+    const TAG_FALSE = 0b010;
+    const TAG_TRUE = 0b011;
 
     const NIL_VAL = NanTaggedValue{ .data = QNAN | TAG_NIL };
     const TRUE_VAL = NanTaggedValue{ .data = QNAN | TAG_TRUE };
@@ -123,117 +123,11 @@ pub const NanTaggedValue = packed struct {
     }
 };
 
-pub const PointerTaggedValue = packed struct {
-    data: u64,
-
-    const SIGN_BIT: u64 = 0x8000000000000000;
-    const QNAN: u64 = 0x7ffc000000000000;
-
-    const TAG_NIL = 1; // 001.
-    const TAG_FALSE = 2; // 010.
-    const TAG_TRUE = 3; // 011.
-
-    const NIL_VAL = PointerTaggedValue{ .data = QNAN | TAG_NIL };
-    const TRUE_VAL = PointerTaggedValue{ .data = QNAN | TAG_TRUE };
-    const FALSE_VAL = PointerTaggedValue{ .data = QNAN | TAG_FALSE };
-
-    pub fn isBool(self: PointerTaggedValue) bool {
-        return (self.data & FALSE_VAL.data) == FALSE_VAL.data;
-    }
-
-    pub fn isNil(self: PointerTaggedValue) bool {
-        return self.data == NIL_VAL.data;
-    }
-
-    pub fn isNumber(self: PointerTaggedValue) bool {
-        return (self.data & QNAN) != QNAN;
-    }
-
-    pub fn isInteger(self: PointerTaggedValue) bool {
-        return (self.data & QNAN) != QNAN;
-    }
-
-    pub fn isObj(self: PointerTaggedValue) bool {
-        return (self.data & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT);
-    }
-
-    pub fn isObjType(self: PointerTaggedValue, objType: Obj.Type) bool {
-        return self.isObj() and self.asObj().objType == objType;
-    }
-
-    pub fn asNumber(self: PointerTaggedValue) f64 {
-        std.debug.assert(self.isNumber());
-        return @as(f64, @bitCast(self.data));
-    }
-
-    pub fn asInteger(self: PointerTaggedValue) u32 {
-        std.debug.assert(self.isNumber());
-        return @as(u32, @intFromFloat(@as(f64, @bitCast(self.data))));
-    }
-
-    pub fn asBool(self: PointerTaggedValue) bool {
-        std.debug.assert(self.isBool());
-        return self.data == TRUE_VAL.data;
-    }
-
-    pub fn asObj(self: PointerTaggedValue) *Obj {
-        std.debug.assert(self.isObj());
-        return @as(*Obj, @ptrFromInt(@as(usize, @intCast(self.data & ~(SIGN_BIT | QNAN)))));
-    }
-
-    pub fn asObjType(self: PointerTaggedValue, comptime objType: Obj.Type) *Obj.ObjType(objType) {
-        return self.asObj().asObjType(objType);
-    }
-
-    pub fn fromNumber(x: f64) PointerTaggedValue {
-        return PointerTaggedValue{ .data = @as(u64, @bitCast(x)) };
-    }
-
-    pub fn fromBool(x: bool) PointerTaggedValue {
-        return if (x) TRUE_VAL else FALSE_VAL;
-    }
-
-    pub fn fromObj(x: *Obj) PointerTaggedValue {
-        return PointerTaggedValue{ .data = SIGN_BIT | QNAN | @intFromPtr(x) };
-    }
-
-    pub fn nil() PointerTaggedValue {
-        return NIL_VAL;
-    }
-
-    pub fn isFalsey(self: PointerTaggedValue) bool {
-        if (self.isBool()) return !self.asBool();
-        if (self.isNil()) return true;
-        return false;
-    }
-
-    pub fn equals(self: PointerTaggedValue, other: PointerTaggedValue) bool {
-        // Be careful about IEEE NaN equality semantics
-        if (self.isNumber() and other.isNumber()) return self.asNumber() == other.asNumber();
-        return self.data == other.data;
-    }
-
-    pub fn format(self: PointerTaggedValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-        _ = options;
-        _ = fmt;
-        if (self.isNumber()) {
-            try writer.print("{d}", .{self.asNumber()});
-        } else if (self.isBool()) {
-            try writer.print("{}", .{self.asBool()});
-        } else if (self.isNil()) {
-            try writer.print("nil", .{});
-        } else {
-            const obj = self.asObj();
-            try printObject(obj, writer);
-        }
-    }
-};
-
 pub const UnionValue = union(ValueType) {
     Bool: bool,
-    Nil,
     Number: f64,
     Obj: *Obj,
+    Nil,
 
     pub fn isBool(self: UnionValue) bool {
         return self == .Bool;
@@ -337,6 +231,136 @@ pub const UnionValue = union(ValueType) {
     }
 };
 
+const NumberType = enum {
+    F32,
+    F64,
+    Int32,
+    Int64,
+};
+
+const NumberMeta = struct { isConst: bool, numberType: NumberType };
+const ObjMeta = struct { isConst: bool, objType: Obj.Type };
+const BoolMeta = struct { isConst: bool };
+const NilMeta = struct { isConst: bool };
+
+const ValueMeta = union(ValueType) {
+    Number: NumberMeta,
+    Obj: ObjMeta,
+    Bool: BoolMeta,
+    Nil: NilMeta,
+};
+
+pub const FatValue = struct {
+    meta: ValueMeta,
+    val: union {
+        Bool: bool,
+        Number: f64,
+        Obj: *Obj,
+        Nil: void,
+    },
+
+    pub fn isBool(self: FatValue) bool {
+        return self.meta == .Bool;
+    }
+
+    pub fn isNil(self: FatValue) bool {
+        return self.meta == .Nil;
+    }
+
+    pub fn isNumber(self: FatValue) bool {
+        return self.meta == .Number;
+    }
+
+    pub fn isObj(self: FatValue) bool {
+        return self.meta == .Obj;
+    }
+
+    pub fn isObjType(self: FatValue, objType: Obj.Type) bool {
+        return self.isObj() and self.asObj().objType == objType;
+    }
+
+    pub fn asBool(self: FatValue) bool {
+        std.debug.assert(self.isBool());
+        return self.val.Bool;
+    }
+
+    pub fn asNumber(self: FatValue) f64 {
+        std.debug.assert(self.isNumber());
+        return self.val.Number;
+    }
+
+    pub fn asInteger(self: FatValue) u32 {
+        std.debug.assert(self.isNumber());
+        return @as(u32, @intFromFloat(self.val.Number));
+    }
+
+    pub fn asObj(self: FatValue) *Obj {
+        std.debug.assert(self.isObj());
+        return self.val.Obj;
+    }
+
+    pub fn asObjType(self: FatValue, comptime objType: Obj.Type) *Obj.ObjType(objType) {
+        return self.asObj().asObjType(objType);
+    }
+
+    pub fn fromBool(x: bool) FatValue {
+        return FatValue{ .Bool = x };
+    }
+
+    pub fn nil() FatValue {
+        return .Nil;
+    }
+
+    pub fn fromNumber(x: f64) FatValue {
+        return FatValue{ .Number = x };
+    }
+
+    pub fn fromObj(x: *Obj) FatValue {
+        return FatValue{ .Obj = x };
+    }
+
+    pub fn isFalsey(self: FatValue) bool {
+        return switch (self.tag) {
+            .Bool => !self.val,
+            .Nil => true,
+            .Number => false,
+            .Obj => false,
+        };
+    }
+
+    pub fn equals(aBoxed: FatValue, bBoxed: FatValue) bool {
+        return switch (aBoxed) {
+            .Bool => |a| switch (bBoxed) {
+                .Bool => |b| a == b,
+                else => false,
+            },
+            .Nil => switch (bBoxed) {
+                .Nil => true,
+                else => false,
+            },
+            .Number => |a| switch (bBoxed) {
+                .Number => |b| a == b,
+                else => false,
+            },
+            .Obj => |a| switch (bBoxed) {
+                .Obj => |b| a == b,
+                else => false,
+            },
+        };
+    }
+
+    pub fn format(self: FatValue, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .Number => |value| try writer.print("{d}", .{value}),
+            .Bool => |value| try writer.print("{}", .{value}),
+            .Nil => try writer.print("nil", .{}),
+            .Obj => |obj| try printObject(obj, writer),
+        }
+    }
+};
+
 // Shared between the two value representations
 fn printObject(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
     switch (obj.objType) {
@@ -353,7 +377,7 @@ fn printObject(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
 }
 
 fn printString(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    try writer.print("{s}", .{obj.asString().bytes});
+    try writer.print("\"{s}\"", .{obj.asString().bytes});
 }
 
 fn printList(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
@@ -384,18 +408,18 @@ fn printClosure(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
 
 fn printUpvalue(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
     const val = obj.asUpvalue().location;
-    try writer.print("upvalue {}", .{val});
+    try writer.print("<upvalue {}>", .{val});
 }
 
 fn printClass(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    try writer.print("{s}", .{obj.asClass().name.bytes});
+    try writer.print("<class {s}>", .{obj.asClass().name.bytes});
 }
 
 fn printInstance(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
-    try writer.print("{s} instance", .{obj.asInstance().class.name.bytes});
+    try writer.print("<instanceof {s}>", .{obj.asInstance().class.name.bytes});
 }
 
 fn printBoundMethod(obj: *Obj, writer: anytype) @TypeOf(writer).Error!void {
     const name = if (obj.asBoundMethod().method.function.name) |str| str.bytes else "<script>";
-    try writer.print("<fn {s}>", .{name});
+    try writer.print("<method {s}>", .{name});
 }

@@ -1,7 +1,14 @@
 const std = @import("std");
 const VM = @import("../vm.zig").VM;
-const Value = @import("../vm.zig").Value;
+const NativeBinding = @import("../vm.zig").NativeBinding;
+const Value = @import("../value.zig").Value;
 const Obj = @import("../object.zig").Obj;
+
+const natives = [_]NativeBinding{};
+
+pub fn defineAllNatives(vm: *VM) !void {
+    for (natives) |n| try vm.defineNative(n.name, n.function);
+}
 
 fn toString(vm: *VM, args: []Value) Value {
     if (args.len != 0) {
@@ -195,7 +202,7 @@ const src =
     \\      extern fn clone(this)
     \\      extern fn sort(this)
     \\      extern fn reverse(this)
-
+    \\
     \\      fn map(list, func) {
     \\          const temp = [];
     \\          for (list) |o| {

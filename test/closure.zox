@@ -1,26 +1,18 @@
-fn fact(p_a, p_b) {
-    var a = p_a;
-    var b = p_b;
-    print a;
-    print b;
+(defn fact [p_a p_b]
+    (var a p_a)
+    (var b p_b)
+    (print a b)
+    (fn [] 
+        (var s (+ a b))
+        (set a b)
+        (set b s)))
 
-    fn gg() {
-        var s = a + b;
-        print s;
-        a = b;
-        b = s;
-    }
+(var pk (clock))
+(var p (fact 0 1))
+(var i 0)
+(while (< i 80) 
+    (p)
+    (set i (+ i 1)))
 
-    return gg;
-}
-
-var pk = clock();
-var p = fact(0, 1);
-var i = 0;
-while (i < 80) {
-    p();
-    i = i + 1;
-}
-
-var pt = clock() - pk;
-print pt;
+(var pt (- (clock) pk))
+(print pt)

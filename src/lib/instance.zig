@@ -1,7 +1,14 @@
 const std = @import("std");
 const VM = @import("../vm.zig").VM;
-const Value = @import("../vm.zig").Value;
+const NativeBinding = @import("../vm.zig").NativeBinding;
+const Value = @import("../value.zig").Value;
 const Obj = @import("../object.zig").Obj;
+
+const natives = [_]NativeBinding{};
+
+pub fn defineAllNatives(vm: *VM) !void {
+    for (natives) |n| try vm.defineNative(n.name, n.function);
+}
 
 fn toString(vm: *VM, args: []Value) Value {
     if (args.len != 0) {
@@ -71,11 +78,4 @@ fn methods(vm: *VM, args: []Value) Value {
     _ = vm.pop();
 
     return Value.fromObj(list);
-}
-
-fn declareInstanceMethods(vm: *VM) void {
-    vm.defineNative(&vm.instanceMethods, "toString", toString);
-    vm.defineNative(&vm.instanceMethods, "isInstance", isInstance);
-    vm.defineNative(&vm.instanceMethods, "copy", copy);
-    vm.defineNative(&vm.instanceMethods, "methods", methods);
 }

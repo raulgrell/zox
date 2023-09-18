@@ -8,8 +8,99 @@ const Token = @import("./scanner.zig").Token;
 const TokenType = @import("./scanner.zig").TokenType;
 const Value = @import("./value.zig").Value;
 const VM = @import("./vm.zig").VM;
+const NativeBinding = @import("./vm.zig").NativeBinding;
 
 const debug = @import("./debug.zig");
+const lib = @import("./lib.zig");
+
+const Error = error{ CompileError, OutOfMemory };
+
+pub const Builtin = enum(u8) {
+    Plus,
+    Minus,
+    Times,
+    Divide,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    And,
+    Break,
+    Class,
+    Continue,
+    Const,
+    Do,
+    False,
+    Fn,
+    For,
+    If,
+    Nil,
+    Or,
+    Print,
+    Return,
+    Static,
+    Super,
+    This,
+    True,
+    Var,
+    With,
+    While,
+};
+
+const Form = struct {
+    builtin: Builtin,
+    name: []const u8,
+    func: *const fn (*Context) Error!void,
+};
+
+fn form(
+    comptime builtin: Builtin,
+    comptime name: []const u8,
+    comptime func: *const fn (*Context) Error!void,
+) Form {
+    return Form{ .builtin = builtin, .name = name, .func = func };
+}
+
+fn getForm(text: []const u8) ?Form {
+    for (forms) |kw| {
+        if (std.mem.eql(u8, kw.name, text)) return kw;
+    }
+    return null;
+}
+
+pub const forms = [_]Form{
+    form(.Plus, "+", Context.parseOperator),
+    form(.Minus, "-", Context.parseOperator),
+    form(.Times, "*", Context.parseOperator),
+    form(.Divide, "/", Context.parseOperator),
+    form(.Equal, "==", Context.parseOperator),
+    form(.NotEqual, "!=", Context.parseOperator),
+    form(.Less, "<", Context.parseOperator),
+    form(.LessEqual, "<=", Context.parseOperator),
+    form(.Greater, ">", Context.parseOperator),
+    form(.GreaterEqual, ">=", Context.parseOperator),
+    form(.Break, "break", Context.parseBreak),
+    form(.Class, "class", Context.parseClass),
+    form(.Continue, "continue", Context.parseContinue),
+    form(.Const, "const", Context.parseConst),
+    form(.Do, "do", Context.parseDo),
+    form(.False, "false", Context.parseLiteral),
+    form(.Fn, "fn", Context.parseFn),
+    form(.For, "for", Context.parseFor),
+    form(.If, "if", Context.parseIf),
+    form(.Nil, "nil", Context.parseLiteral),
+    form(.Or, "or", Context.parseOr),
+    form(.Print, "print", Context.parsePrint),
+    form(.Return, "return", Context.parseReturn),
+    form(.Super, "super", Context.parseSuper),
+    form(.This, "this", Context.parseThis),
+    form(.True, "true", Context.parseLiteral),
+    form(.Var, "var", Context.parseVar),
+    form(.With, "with", Context.parseWith),
+    form(.While, "while", Context.parseWhile),
+};
 
 pub const Parser = struct {
     scanner: Scanner,
@@ -21,15 +112,13 @@ pub const Parser = struct {
     had_panic: bool = false,
 
     fn create(source: []const u8) Parser {
-        return Parser{
-            .scanner = Scanner.create(source),
-        };
+        return Parser{ .scanner = Scanner.create(source) };
     }
 
     fn advance(self: *Parser) void {
         self.previous = self.current;
 
-        while (true) {
+        while (self.previous.token_type != .EOF) {
             self.current = self.scanner.scanToken();
             if (self.current.token_type != .Error) break;
             self.errorAtCurrent(self.current.lexeme);
@@ -38,7 +127,7 @@ pub const Parser = struct {
 
     fn consume(self: *Parser, token_type: TokenType, message: []const u8) void {
         if (self.current.token_type == token_type) {
-            _ = self.advance();
+            self.advance();
             return;
         }
 
@@ -67,111 +156,17 @@ pub const Parser = struct {
         if (self.had_panic) return;
         self.had_panic = true;
 
-        std.debug.print("[line {}] Error", .{token.line});
-
-        if (token.token_type == .EOF) {
-            std.debug.print(" at end", .{});
-        } else if (token.token_type == .Error) {
-            // Nothing.
-        } else {
-            std.debug.print(" at '{s}'", .{token.lexeme});
+        std.debug.print("[offset {}] Error", .{token.index});
+        switch (token.token_type) {
+            .EOF => std.debug.print(" at end", .{}),
+            .Error => {},
+            else => std.debug.print(" at '{s}'", .{token.lexeme}),
         }
-
         std.debug.print(": {s}\n", .{message});
+
         self.had_error = true;
     }
 };
-
-pub const ParseRule = struct {
-    prefix: ?*const ParseFn,
-    infix: ?*const ParseFn,
-    precedence: Precedence,
-};
-
-pub const ParseFn = fn (self: *Context, canAssign: bool) void;
-
-pub const Precedence = enum(u8) {
-    None,
-    Assignment, // =
-    Or, // or
-    And, // and
-    Equality, // == !=
-    Comparison, // < > <= >=
-    Term, // + -
-    Factor, // * /
-    Unary, // ! - +
-    Call, // . () []
-    Primary,
-
-    fn next(current: Precedence) Precedence {
-        return @as(Precedence, @enumFromInt(@intFromEnum(current) + 1));
-    }
-
-    fn isLowerThan(current: Precedence, other: Precedence) bool {
-        return @intFromEnum(current) <= @intFromEnum(other);
-    }
-};
-
-fn makeRule(comptime prefix: ?*const ParseFn, comptime infix: ?*const ParseFn, comptime precedence: Precedence) ParseRule {
-    return ParseRule{
-        .prefix = prefix,
-        .infix = infix,
-        .precedence = precedence,
-    };
-}
-
-fn getRule(token: TokenType) ParseRule {
-    return switch (token) {
-        .LeftParen => makeRule(Context.grouping, Context.call, .Call),
-        .RightParen => makeRule(null, null, .None),
-        .LeftBracket => makeRule(Context.list, Context.subscript, .Call),
-        .RightBracket => makeRule(null, null, .None),
-        .LeftBrace => makeRule(null, null, .None),
-        .RightBrace => makeRule(null, null, .None),
-        .Comma => makeRule(null, null, .None),
-        .Dot => makeRule(null, Context.dot, .Call),
-        .Minus => makeRule(Context.unary, Context.binary, .Term),
-        .Plus => makeRule(null, Context.binary, .Term),
-        .Colon => makeRule(null, null, .None),
-        .Semicolon => makeRule(null, null, .None),
-        .Slash => makeRule(null, Context.binary, .Factor),
-        .Star => makeRule(null, Context.binary, .Factor),
-        .Bang => makeRule(Context.unary, null, .None),
-        .BangEqual => makeRule(null, Context.binary, .Equality),
-        .Equal => makeRule(null, null, .None),
-        .EqualEqual => makeRule(null, Context.binary, .Equality),
-        .Greater => makeRule(null, Context.binary, .Comparison),
-        .GreaterEqual => makeRule(null, Context.binary, .Comparison),
-        .Less => makeRule(null, Context.binary, .Comparison),
-        .LessEqual => makeRule(null, Context.binary, .Comparison),
-        .Identifier => makeRule(Context.variable, null, .None),
-        .String => makeRule(Context.string, null, .None),
-        .Number => makeRule(Context.number, null, .None),
-        .And => makeRule(null, Context.andFn, .And),
-        .Break => makeRule(null, null, .None),
-        .Continue => makeRule(null, null, .None),
-        .Class => makeRule(null, null, .None),
-        .Const => makeRule(null, null, .None),
-        .Else => makeRule(null, null, .None),
-        .False => makeRule(Context.literal, null, .None),
-        .Fn => makeRule(null, null, .None),
-        .For => makeRule(null, null, .None),
-        .If => makeRule(null, null, .None),
-        .Nil => makeRule(Context.literal, null, .None),
-        .Or => makeRule(null, Context.orFn, .Or),
-        .Print => makeRule(null, null, .None),
-        .Return => makeRule(null, null, .None),
-        .Static => makeRule(null, null, .None),
-        .Super => makeRule(Context.super, null, .None),
-        .This => makeRule(Context.this, null, .None),
-        .True => makeRule(Context.literal, null, .None),
-        .Var => makeRule(null, null, .None),
-        .With => makeRule(null, null, .None),
-        .While => makeRule(null, null, .None),
-        .Error => makeRule(null, null, .None),
-        .EOF => makeRule(null, null, .None),
-    };
-}
 
 const FunctionType = enum {
     Function,
@@ -207,15 +202,11 @@ pub const Compiler = struct {
     pub fn init(self: *Compiler, context: *Context) !void {
         context.current = self;
 
-        switch (self.T) {
-            .Initializer, .Method, .Static, .Function => {
-                self.function.name = try Obj.String.copy(context.vm, context.parser.previous.lexeme);
-            },
+        self.function.name = switch (self.T) {
+            .Initializer, .Method, .Static, .Function => try Obj.String.copy(context.vm, context.parser.previous.lexeme),
             .Abstract => unreachable,
-            .TopLevel => self.function.name = null,
-        }
-
-        // const hasReceiver = self.T != .Function and self.T != .Static;
+            .TopLevel => null,
+        };
 
         try self.locals.append(Local{
             .depth = @as(i32, @intCast(self.scope_depth)),
@@ -256,30 +247,36 @@ pub const Context = struct {
     parser: *Parser = undefined,
     current: *Compiler = undefined,
     currentClass: ?*ClassCompiler = null,
-
-    const Error = error{ CompileError, RuntimeError, OutOfMemory };
+    groupStack: std.ArrayList(TokenType) = undefined,
 
     pub fn compile(self: *Context, vm: *VM, source: []const u8) !*Obj.Function {
+        var parser = Parser.create(source);
+
         var compiler = try Compiler.create(vm, null, 0, .TopLevel);
         try compiler.init(self);
         defer compiler.deinit();
 
-        var parser = Parser.create(source);
+        self.groupStack = std.ArrayList(TokenType).init(vm.allocator);
+        defer self.groupStack.deinit();
 
         self.vm = vm;
-        self.current = &compiler;
         self.parser = &parser;
+        self.current = &compiler;
 
         self.parser.advance();
 
         while (!self.parser.match(.EOF))
-            try self.declaration();
+            try self.parseExpression();
 
-        return self.end();
+        const func = self.end();
+
+        std.debug.assert(self.groupStack.items.len == 0);
+
+        return if (self.parser.had_error) error.CompileError else func;
     }
 
     fn end(self: *Context) !*Obj.Function {
-        self.emitReturn();
+        try self.emitReturn();
 
         if (self.parser.had_error)
             return error.CompileError;
@@ -287,14 +284,15 @@ pub const Context = struct {
         const func = self.current.function;
 
         if (self.current.enclosing) |outer| {
+            const arg = try self.makeConstant(outer, func.obj.value());
             // Capture the upvalues in the new closure object.
-            self.emitUnaryOp(outer, .Closure, self.makeConstant(outer, func.obj.value()));
+            try self.emitUnaryOp(outer, .Closure, arg);
 
             // Emit arguments for each upvalue to know whether to capture a local or an upvalue.
             var i: usize = 0;
             while (i < func.upvalueCount) : (i += 1) {
-                self.emitByte(outer, if (self.current.upvalues.items[i].isLocal) 1 else 0);
-                self.emitByte(outer, self.current.upvalues.items[i].index);
+                try self.emitByte(outer, if (self.current.upvalues.items[i].isLocal) 1 else 0);
+                try self.emitByte(outer, self.current.upvalues.items[i].index);
             }
         }
 
@@ -308,90 +306,160 @@ pub const Context = struct {
         return func;
     }
 
-    fn statement(self: *Context) Error!void {
-        if (self.parser.match(.Print)) {
-            self.printStatement();
-        } else if (self.parser.match(.If)) {
-            try self.ifStatement();
-        } else if (self.parser.match(.Return)) {
-            self.returnStatement();
-        } else if (self.parser.match(.While)) {
-            try self.whileStatement();
-        } else if (self.parser.match(.With)) {
-            self.withStatement();
-        } else if (self.parser.match(.Break)) {
-            self.breakStatement();
-        } else if (self.parser.match(.Continue)) {
-            self.continueStatement();
-        } else if (self.parser.match(.For)) {
-            self.forStatement();
-        } else if (self.parser.match(.LeftBrace)) {
-            self.beginScope();
-            try self.block();
-            self.endScope();
-        } else {
-            self.expressionStatement();
+    fn parseExpression(self: *Context) !void {
+        self.parser.advance();
+        switch (self.parser.previous.token_type) {
+            .LeftParen => try self.parseParenExpr(),
+            .RightParen => {},
+            .LeftBracket => try self.parseBracketExpr(),
+            .RightBracket => {},
+            .LeftBrace => try self.parseBraceExpr(),
+            .RightBrace => {},
+            .Quote => unreachable,
+            .Quasiquote => unreachable,
+            .Unquote => unreachable,
+            .Splice => unreachable,
+            .Identifier => try self.parseIdentifierExpr(),
+            .Number => try self.parseNumber(),
+            .String => try self.string(),
+            .True, .False, .Nil => try self.parseLiteral(),
+            .Error => return error.CompileError,
+            .EOF => {},
         }
     }
 
-    fn withStatement(self: *Context) void {
-        _ = self;
+    fn parseParenExpr(self: *Context) Error!void {
+        try self.beginGrouping(.RightParen);
+        const curr = self.parser.current;
+        if (getForm(curr.lexeme)) |f| {
+            self.parser.advance();
+            try f.func(self);
+        } else {
+            var arg_count: u8 = 0;
+            try self.parseExpression();
+            while (!self.parser.check(.RightParen)) {
+                arg_count += 1;
+                try self.parseExpression();
+                if (arg_count == 32) self.parser.errorAtPrevious("Cannot have more than 32 arguments.");
+            }
+
+            try self.emitOp(self.current, .Call);
+            try self.emitByte(self.current, arg_count);
+        }
+
+        try self.endGrouping(.RightParen, "Expect ')' after arguments.");
     }
 
-    fn breakStatement(self: *Context) void {
-        _ = self;
+    fn parseBracketExpr(self: *Context) Error!void {
+        try self.beginGrouping(.RightBracket);
+        var expr_count: u8 = 0;
+        try self.emitOp(self.current, .NewList);
+        try self.parseExpression();
+        try self.emitOp(self.current, .AddList);
+        while (!self.parser.check(.RightBracket)) {
+            expr_count += 1;
+            try self.parseExpression();
+            try self.emitOp(self.current, .AddList);
+        }
+        try self.endGrouping(.RightBracket, "Expect ']' after arguments.");
     }
 
-    fn continueStatement(self: *Context) void {
-        _ = self;
+    fn parseBraceExpr(self: *Context) Error!void {
+        try self.beginGrouping(.RightBrace);
+        var expr_count: u8 = 0;
+        try self.parseExpression();
+        while (!self.parser.check(.RightBrace)) {
+            expr_count += 1;
+            try self.parseExpression();
+            try self.emitOp(self.current, .Swap);
+            try self.parseExpression();
+            try self.emitOp(self.current, .Call);
+            try self.emitByte(self.current, 2);
+        }
+        try self.endGrouping(.RightBrace, "Expect '}' after arguments.");
     }
 
-    fn forStatement(self: *Context) void {
-        _ = self;
+    fn parseIdentifierExpr(self: *Context) Error!void {
+        if (getForm(self.parser.previous.lexeme)) |f| {
+            try f.func(self);
+        } else {
+            try self.parseVariable();
+        }
     }
 
-    fn printStatement(self: *Context) void {
-        if (debug.trace_parser) std.debug.print("S | Print\n", .{});
-        self.expression();
-        self.parser.consume(.Semicolon, "Expect ';' after value.");
-        self.emitOp(self.current, .Print);
+    pub fn beginGrouping(self: *Context, token_type: TokenType) !void {
+        try self.groupStack.append(token_type);
     }
 
-    fn ifStatement(self: *Context) Error!void {
-        if (debug.trace_parser) std.debug.print("S | If\n", .{});
-        self.parser.consume(.LeftParen, "Expect '(' after if.");
-        self.expression();
-        self.parser.consume(.RightParen, "Expect ')' after condition");
+    pub fn endGrouping(self: *Context, token_type: TokenType, message: []const u8) !void {
+        if (self.groupStack.getLast() == token_type) {
+            _ = self.groupStack.pop();
+            self.parser.consume(token_type, message);
+        } else {
+            return error.CompileError;
+        }
+    }
 
-        const thenJump = self.emitJump(OpCode.JumpIfFalse);
-        self.emitOp(self.current, .Pop);
-        try self.statement();
+    fn parseOperator(self: *Context) Error!void {
+        const special = getForm(self.parser.previous.lexeme) orelse unreachable;
+        const op = switch (special.builtin) {
+            .Plus => OpCode.Add,
+            .Minus => OpCode.Subtract,
+            .Times => OpCode.Multiply,
+            .Divide => OpCode.Divide,
+            .Equal => OpCode.Equal,
+            .NotEqual => OpCode.NotEqual,
+            .Less => OpCode.Less,
+            .LessEqual => OpCode.LessEqual,
+            .Greater => OpCode.Greater,
+            .GreaterEqual => OpCode.GreaterEqual,
+            else => unreachable,
+        };
+        try self.parseExpression();
+        while (!self.parser.check(.RightParen)) {
+            try self.parseExpression();
+            try self.emitOp(self.current, op);
+        }
+    }
 
-        const elseJump = self.emitJump(.Jump);
+    fn parsePrint(self: *Context) Error!void {
+        try self.parseExpression();
+        try self.emitOp(self.current, .Print);
+    }
+
+    fn parseIf(self: *Context) Error!void {
+        try self.parseExpression();
+
+        const thenJump = try self.emitJump(OpCode.JumpIfFalse);
+        try self.emitOp(self.current, .Pop);
+
+        try self.parseExpression();
+
+        const elseJump = try self.emitJump(.Jump);
 
         self.patchJump(thenJump);
-        self.emitOp(self.current, .Pop);
+        try self.emitOp(self.current, .Pop);
 
-        if (self.parser.match(.Else)) try self.statement();
+        if (!self.parser.check(.RightParen))
+            try self.parseExpression();
+
         self.patchJump(elseJump);
     }
 
-    fn returnStatement(self: *Context) void {
-        if (debug.trace_parser) std.debug.print("S | Return\n", .{});
-
+    fn parseReturn(self: *Context) Error!void {
         if (self.current.T == .TopLevel) {
             self.parser.errorAtPrevious("Cannot return from top-level code.");
         }
 
-        if (self.parser.match(.Semicolon)) {
-            self.emitReturn();
+        if (self.parser.match(.RightParen)) {
+            try self.emitReturn();
         } else {
             if (self.current.T == .Initializer) {
                 self.parser.errorAtPrevious("Cannot return from an initializer");
             }
-            self.expression();
-            self.parser.consume(.Semicolon, "Expect ';' after return value.");
-            self.emitOp(self.current, .Return);
+            try self.parseExpression();
+            self.parser.consume(.RightParen, "Expected ')' after return");
+            try self.emitOp(self.current, .Return);
         }
     }
 
@@ -404,10 +472,7 @@ pub const Context = struct {
         self.current.chunk().code.items[offset + 1] = @as(u8, @truncate(jump & 0xff));
     }
 
-    fn whileStatement(self: *Context) !void {
-        if (debug.trace_parser)
-            std.debug.print("S | While\n", .{});
-
+    fn parseWhile(self: *Context) Error!void {
         self.current.loop_depth += 1;
 
         const surroundingLoopStart = self.parser.innermostLoopStart;
@@ -415,19 +480,19 @@ pub const Context = struct {
         self.parser.innermostLoopStart = @as(u32, @intCast(self.current.chunk().code.items.len));
         self.parser.innermostLoopScopeDepth = self.current.scope_depth;
 
-        self.parser.consume(.LeftParen, "Expect '(' after 'while'.");
-        self.expression();
-        self.parser.consume(.RightParen, "Expect ')' after condition.");
+        try self.parseExpression();
 
-        const exitJump = self.emitJump(.JumpIfFalse);
+        const exitJump = try self.emitJump(.JumpIfFalse);
+        try self.emitOp(self.current, .Pop);
 
-        self.emitOp(self.current, .Pop);
-        try self.statement();
+        try self.parseExpression();
 
-        self.emitLoop(@as(i32, @intCast(self.parser.innermostLoopStart)));
+        try self.emitLoop(@intCast(self.parser.innermostLoopStart));
 
         self.patchJump(exitJump);
-        self.emitOp(self.current, .Pop);
+        try self.emitOp(self.current, .Pop);
+
+        self.parser.consume(.RightParen, "Expect ')' after condition.");
 
         self.parser.innermostLoopStart = surroundingLoopStart;
         self.parser.innermostLoopScopeDepth = surroundingLoopScopeDepth;
@@ -435,83 +500,36 @@ pub const Context = struct {
         self.current.loop_depth -= 1;
     }
 
-    fn expression(self: *Context) void {
-        self.parsePrecedence(Precedence.Assignment);
-    }
-
     fn beginScope(self: *Context) void {
         self.current.scope_depth += 1;
     }
 
-    fn endScope(self: *Context) void {
+    fn endScope(self: *Context) Error!void {
         self.current.scope_depth -= 1;
         while (self.current.locals.popOrNull()) |l| {
             if (l.depth <= self.current.scope_depth) break;
             if (l.isCaptured) {
-                self.emitOp(self.current, .CloseUpvalue);
+                try self.emitOp(self.current, .CloseUpvalue);
             } else {
-                self.emitOp(self.current, .Pop);
+                try self.emitOp(self.current, .Pop);
             }
         }
     }
 
     fn block(self: *Context) !void {
-        while (!(self.parser.check(.RightBrace) or self.parser.check(.EOF))) {
-            try self.declaration();
-        }
-
-        self.parser.consume(.RightBrace, "Expect '}' after block.");
-    }
-
-    fn expressionStatement(self: *Context) void {
-        if (debug.trace_parser) std.debug.print("S | Expression\n", .{});
-        self.expression();
-        self.emitOp(self.current, .Pop);
-        self.parser.consume(.Semicolon, "Expect ';' after expression.");
-    }
-
-    fn declaration(self: *Context) Error!void {
-        if (self.parser.match(.Class)) {
-            try self.classDeclaration();
-        } else if (self.parser.match(.Fn)) {
-            try self.fnDeclaration();
-        } else if (self.parser.match(.Var)) {
-            try self.varDeclaration();
-        } else if (self.parser.match(.Const)) {
-            try self.constDeclaration();
-        } else {
-            try self.statement();
-        }
-
-        if (self.parser.had_panic) {
-            self.synchronize();
+        while (!(self.parser.check(.RightParen) or self.parser.check(.EOF))) {
+            try self.parseExpression();
         }
     }
 
-    fn synchronize(self: *Context) void {
-        self.parser.had_panic = false;
-
-        while (self.parser.current.token_type != .EOF) {
-            if (self.parser.previous.token_type == .Semicolon) return;
-
-            switch (self.parser.current.token_type) {
-                .Class, .Fn, .Var, .Const, .For, .If, .While, .Print, .Return => return,
-                else => {
-                    self.parser.advance();
-                },
-            }
-        }
-    }
-
-    fn classDeclaration(self: *Context) Error!void {
-        if (debug.trace_parser) std.debug.print("S | Class\n", .{});
+    fn parseClass(self: *Context) Error!void {
         self.parser.consume(.Identifier, "Expect class name.");
 
         const nameConstant = try self.identifierConstant(self.parser.previous);
         try self.declareVariable();
 
-        self.emitUnaryOp(self.current, .Class, nameConstant);
-        self.defineVariable(nameConstant);
+        try self.emitUnaryOp(self.current, .Class, nameConstant);
+        try self.defineVariable(nameConstant);
 
         var classCompiler = ClassCompiler{
             .name = self.parser.previous,
@@ -522,11 +540,10 @@ pub const Context = struct {
         self.currentClass = &classCompiler;
         defer self.currentClass = self.currentClass.?.enclosing;
 
-        if (self.parser.match(.Less)) {
-            if (debug.trace_parser) std.debug.print("S | Superclass\n", .{});
+        if (self.parser.match(.LeftBracket)) {
             self.parser.consume(.Identifier, "Expect superclass name");
 
-            self.variable(false);
+            try self.parseVariable();
 
             if (identifiersEqual(classCompiler.name, self.parser.previous)) {
                 self.parser.errorAtPrevious("Class cannot inherit from itself.");
@@ -535,54 +552,57 @@ pub const Context = struct {
 
             self.beginScope();
             try self.addLocal(Token.symbol("super"));
-            self.defineVariable(0);
+            try self.defineVariable(0);
 
-            try self.namedVariable(classCompiler.name, false);
-            self.emitOp(self.current, .Inherit);
+            try self.getVariable(classCompiler.name);
+            try self.emitOp(self.current, .Inherit);
             classCompiler.hasSuperclass = true;
+
+            self.parser.consume(.RightBracket, "Expect ']' after superlist.");
         }
 
-        try self.namedVariable(classCompiler.name, false);
+        while (!self.parser.check(.RightParen) and !self.parser.check(.EOF)) {
+            self.parser.consume(.LeftParen, "Expect declaration");
+            if (getForm(self.parser.current.lexeme)) |f| {
+                self.parser.advance();
+                switch (f.builtin) {
+                    .Fn => try self.parseMethod(),
+                    .Var => try self.parseVar(),
+                    else => return error.CompileError,
+                }
+            } else {
+                return error.CompileError;
+            }
+        }
 
-        self.parser.consume(.LeftBrace, "Expect '{' before class body.");
-        while (!self.parser.check(.RightBrace) and !self.parser.check(.EOF)) try self.method();
-        self.parser.consume(.RightBrace, "Expect '}' after class body.");
-
-        self.emitOp(self.current, .Pop);
-
-        if (classCompiler.hasSuperclass) self.endScope();
+        if (classCompiler.hasSuperclass) try self.endScope();
     }
 
-    fn method(self: *Context) !void {
-        if (debug.trace_parser) std.debug.print("S | Method\n", .{});
-
-        var T: FunctionType = undefined;
-        if (self.parser.check(.Static)) {
-            T = .Static;
-            self.parser.consume(.Static, "Expect static.");
-        } else {
-            T = .Method;
-        }
-
-        self.parser.consume(.Fn, "Expect method declaration.");
+    fn parseMethod(self: *Context) Error!void {
         self.parser.consume(.Identifier, "Expect method name.");
         const constant = try self.identifierConstant(self.parser.previous);
 
-        if (std.mem.eql(u8, self.parser.previous.lexeme, "init")) {
-            T = .Initializer;
-        }
+        try self.function(.Method);
+        try self.emitUnaryOp(self.current, .Method, constant);
+        try self.emitOp(self.current, .Pop);
 
-        try self.function(T);
-
-        self.emitUnaryOp(self.current, .Method, constant);
+        self.parser.consume(.RightParen, "Expect closing ')' in method declaration");
     }
 
-    fn fnDeclaration(self: *Context) Error!void {
-        if (debug.trace_parser) std.debug.print("S | Function\n", .{});
-        const global = try self.parseVariable("Expect function name.");
-        self.markInitialized(); // should this be here?
+    fn parseInit(self: *Context) Error!void {
+        self.parser.consume(.Identifier, "Expect initializer name.");
+        const constant = try self.identifierConstant(self.parser.previous);
+
+        try self.function(.Initializer);
+        try self.emitUnaryOp(self.current, .Initializer, constant);
+        self.parser.consume(.RightParen, "Expect closing ')' in method declaration");
+    }
+
+    fn parseFn(self: *Context) Error!void {
+        const global = try self.parseVariableDeclaration("Expect function name.");
+        self.markInitialized();
         try self.function(.Function);
-        self.defineVariable(global);
+        try self.defineVariable(global);
     }
 
     fn function(self: *Context, fn_type: FunctionType) !void {
@@ -595,70 +615,61 @@ pub const Context = struct {
         self.current.function.name = try Obj.String.copy(self.vm, self.parser.previous.lexeme);
 
         self.beginScope();
-        self.parser.consume(.LeftParen, "Expect '(' after function name.");
+        self.parser.consume(.LeftBracket, "Expect '[' after function name.");
 
         // Parameters
-        if (!self.parser.check(.RightParen)) {
-            while (true) {
-                if (self.current.function.arity == 32) {
-                    self.parser.errorAtCurrent("Cannot have more than 32 parameters.");
-                }
-                self.current.function.arity += 1;
-                const paramConstant = try self.parseVariable("Expect parameter name.");
-                if (debug.trace_parser) std.debug.print("S | Parameter\n", .{});
-                self.defineVariable(paramConstant);
-                if (!self.parser.match(.Comma)) break;
+        while (!self.parser.check(.RightBracket)) {
+            if (self.current.function.arity == 32) {
+                self.parser.errorAtCurrent("Cannot have more than 32 parameters.");
             }
+            self.current.function.arity += 1;
+            const paramConstant = try self.parseVariableDeclaration("Expect parameter name.");
+            try self.defineVariable(paramConstant);
         }
 
-        self.parser.consume(.RightParen, "Expect ')' after parameters.");
+        self.parser.consume(.RightBracket, "Expect ']' after parameters.");
 
         // Body
-        self.parser.consume(.LeftBrace, "Expect '{' before function body.");
         try self.block();
-
         // Function Object
-        self.endScope();
+        try self.endScope();
 
-        var func = try self.end(); // TODO: Handle static
-        _ = func;
+        _ = try self.end(); // TODO: Handle static
     }
 
-    fn constDeclaration(self: *Context) !void {
-        const global = try self.parseVariable("Expect variable name.");
-        if (debug.trace_parser) std.debug.print("K | Const\n", .{});
-        if (self.parser.match(.Colon)) self.varType("Expect type name  after ':'.");
-        self.parser.consume(.Equal, "Constants must be initialized.");
-        self.expression();
-        self.parser.consume(.Semicolon, "Expect ';' after variable declaration.");
-        self.defineVariable(global);
-    }
+    fn parseWith(_: *Context) Error!void {}
+    fn parseBreak(_: *Context) Error!void {}
+    fn parseContinue(_: *Context) Error!void {}
+    fn parseFor(_: *Context) Error!void {}
 
-    fn varDeclaration(self: *Context) !void {
-        const global = try self.parseVariable("Expect variable name.");
-        if (debug.trace_parser) std.debug.print("K | Var\n", .{});
-        if (self.parser.match(.Colon)) self.varType("Expect type name after ':'.");
-        if (self.parser.match(.Equal)) {
-            self.expression();
-        } else {
-            self.emitOp(self.current, .Nil);
+    fn parseDo(self: *Context) Error!void {
+        try self.parseExpression();
+        while (!self.parser.match(.RightParen)) {
+            try self.emitOp(self.current, .Pop);
+            try self.parseExpression();
         }
-        self.parser.consume(.Semicolon, "Expect ';' after variable declaration.");
-        self.defineVariable(global);
     }
 
-    fn parseVariable(self: *Context, errorMessage: []const u8) !u8 {
+    fn parseConst(self: *Context) Error!void {
+        const global = try self.parseVariableDeclaration("Expect variable name.");
+        try self.parseExpression();
+        try self.defineVariable(global);
+    }
+
+    fn parseVar(self: *Context) Error!void {
+        const global = try self.parseVariableDeclaration("Expect variable name.");
+        try self.parseExpression();
+        try self.defineVariable(global);
+    }
+
+    fn parseVariableDeclaration(self: *Context, errorMessage: []const u8) !u8 {
         self.parser.consume(.Identifier, errorMessage);
         try self.declareVariable();
         if (self.current.scope_depth > 0) return 0;
         return try self.identifierConstant(self.parser.previous);
     }
 
-    fn varType(self: *Context, errorMessage: []const u8) void {
-        self.parser.consume(.Identifier, errorMessage);
-    }
-
-    fn declareVariable(self: *Context) !void {
+    fn declareVariable(self: *Context) Error!void {
         // Global variables are implicitly declared.
         if (self.current.scope_depth == 0) return;
 
@@ -692,12 +703,12 @@ pub const Context = struct {
         self.current.locals.items[local_index].depth = @as(i32, @intCast(self.current.scope_depth));
     }
 
-    fn defineVariable(self: *Context, global: u8) void {
+    fn defineVariable(self: *Context, global: u8) Error!void {
         if (self.current.scope_depth > 0) {
             self.markInitialized();
             return;
         }
-        self.emitUnaryOp(self.current, .DefineGlobal, global);
+        try self.emitUnaryOp(self.current, .DefineGlobal, global);
     }
 
     fn addLocal(self: *Context, name: Token) !void {
@@ -756,175 +767,25 @@ pub const Context = struct {
         }
     }
 
-    fn parsePrecedence(self: *Context, precedence: Precedence) void {
-        _ = self.parser.advance();
-
-        const parsePrefix = getRule(self.parser.previous.token_type).prefix;
-
-        if (debug.trace_parser)
-            std.debug.print("P | {s}: {s}\n", .{
-                @tagName(self.parser.previous.token_type),
-                @tagName(precedence),
-            });
-
-        if (parsePrefix == null) {
-            self.parser.errorAtPrevious("Expect expression.");
-            return;
-        }
-
-        const canAssign = precedence.isLowerThan(.Assignment);
-        parsePrefix.?(self, canAssign);
-
-        while (precedence.isLowerThan(getRule(self.parser.current.token_type).precedence)) {
-            _ = self.parser.advance();
-            const parseInfix = getRule(self.parser.previous.token_type).infix.?;
-            if (debug.trace_parser)
-                std.debug.print("I | {s}: {s}\n", .{
-                    @tagName(self.parser.previous.token_type),
-                    @tagName(precedence),
-                });
-            parseInfix(self, canAssign);
-        }
-
-        if (canAssign and self.parser.match(.Equal)) {
-            self.parser.errorAtPrevious("Invalid assignment target.");
-            self.expression();
-        }
+    fn parseNumber(self: *Context) Error!void {
+        const value = std.fmt.parseFloat(f64, self.parser.previous.lexeme) catch return error.CompileError;
+        try self.emitConstant(self.current, Value.fromNumber(value));
     }
 
-    fn grouping(self: *Context, _: bool) void {
-        self.expression();
-        self.parser.consume(.RightParen, "Expect ')' after expression.");
-    }
-
-    fn call(self: *Context, _: bool) void {
-        const arg_count = self.argumentList();
-        self.emitOp(self.current, .Call);
-        self.emitByte(self.current, arg_count);
-    }
-
-    fn dot(self: *Context, canAssign: bool) void {
-        self.parser.consume(.Identifier, "Expect property name after '.'.");
-        const name = self.identifierConstant(self.parser.previous) catch unreachable;
-        if (canAssign and self.parser.match(.Equal)) {
-            self.expression();
-            self.emitUnaryOp(self.current, .SetProperty, name);
-        } else if (self.parser.match(.LeftParen)) {
-            const argCount = self.argumentList();
-            self.emitUnaryOp(self.current, .Invoke, name);
-            self.emitByte(self.current, argCount);
-        } else {
-            self.emitUnaryOp(self.current, .GetProperty, name);
-        }
-    }
-
-    fn argumentList(self: *Context) u8 {
-        var arg_count: u8 = 0;
-        if (!self.parser.check(.RightParen)) {
-            arg_count += 1;
-            self.expression();
-            while (self.parser.match(.Comma)) {
-                self.expression();
-                if (arg_count == 32) {
-                    self.parser.errorAtPrevious("Cannot have more than 32 arguments.");
-                }
-                arg_count += 1;
-            }
-        }
-
-        self.parser.consume(.RightParen, "Expect ')' after arguments.");
-        return arg_count;
-    }
-
-    fn number(self: *Context, _: bool) void {
-        const value = std.fmt.parseUnsigned(u8, self.parser.previous.lexeme, 10) catch unreachable;
-        self.emitConstant(self.current, Value.fromNumber(@as(f64, @floatFromInt(value))));
-    }
-
-    fn unary(self: *Context, _: bool) void {
-        const operator_type = self.parser.previous.token_type;
-
-        // Compile the operand.
-        self.parsePrecedence(Precedence.Unary);
-
-        // Emit the operator instruction.
-        switch (operator_type) {
-            .Bang => self.emitOp(self.current, .Not),
-            .Minus => self.emitOp(self.current, .Negate),
-            else => unreachable,
-        }
-    }
-
-    fn binary(self: *Context, _: bool) void {
-        // Remember the operator.
-        const operator_type = self.parser.previous.token_type;
-
-        // Compile the right operand.
-        const rule = getRule(operator_type);
-        self.parsePrecedence(rule.precedence.next());
-
-        // Emit the operator instruction.
-        switch (operator_type) {
-            .BangEqual => {
-                self.emitOp(self.current, .Equal);
-                self.emitOp(self.current, .Not);
-            },
-            .EqualEqual => self.emitOp(self.current, .Equal),
-            .Greater => self.emitOp(self.current, .Greater),
-            .GreaterEqual => {
-                self.emitOp(self.current, .Less);
-                self.emitOp(self.current, .Not);
-            },
-            .Less => self.emitOp(self.current, .Less),
-            .LessEqual => {
-                self.emitOp(self.current, .Greater);
-                self.emitOp(self.current, .Not);
-            },
-            .Plus => self.emitOp(self.current, .Add),
-            .Minus => self.emitOp(self.current, .Subtract),
-            .Star => self.emitOp(self.current, .Multiply),
-            .Slash => self.emitOp(self.current, .Divide),
-            else => unreachable,
-        }
-    }
-
-    fn literal(self: *Context, _: bool) void {
+    fn parseLiteral(self: *Context) Error!void {
         switch (self.parser.previous.token_type) {
-            .Nil => self.emitOp(self.current, .Nil),
-            .False => self.emitOp(self.current, .False),
-            .True => self.emitOp(self.current, .True),
-            else => unreachable,
+            .Nil => try self.emitOp(self.current, .Nil),
+            .False => try self.emitOp(self.current, .False),
+            .True => try self.emitOp(self.current, .True),
+            else => return error.CompileError,
         }
     }
 
-    fn list(self: *Context, _: bool) void {
-        self.emitOp(self.current, .NewList);
-        while (true) {
-            if (self.parser.check(.RightBracket)) break;
-            self.expression();
-            self.emitOp(self.current, .AddList);
-            if (!self.parser.match(.Comma)) break;
-        }
-
-        self.parser.consume(.RightBracket, "Expected closing ']'");
+    fn parseVariable(self: *Context) Error!void {
+        try self.getVariable(self.parser.previous);
     }
 
-    fn subscript(self: *Context, _: bool) void {
-        self.expression();
-        self.parser.consume(.RightBracket, "Expected closing ']'");
-        if (self.parser.match(.Equal)) {
-            self.expression();
-            self.emitOp(self.current, .SubscriptAssign);
-        } else {
-            self.emitOp(self.current, .Subscript);
-        }
-    }
-
-    fn variable(self: *Context, canAssign: bool) void {
-        self.namedVariable(self.parser.previous, canAssign) catch unreachable;
-    }
-
-    fn super(self: *Context, _: bool) void {
+    fn parseSuper(self: *Context) Error!void {
         if (self.currentClass) |class| {
             if (!class.hasSuperclass) {
                 self.parser.errorAtPrevious("Cannot use 'super' in a class with no superclass.");
@@ -933,135 +794,136 @@ pub const Context = struct {
             self.parser.errorAtPrevious("Cannot use 'super' outside of a class.");
         }
 
-        self.parser.consume(.Dot, "Expect '.' after 'super'");
         self.parser.consume(.Identifier, "Expect superclass method name");
-        const name = self.identifierConstant(self.parser.previous) catch unreachable;
+        const name = try self.identifierConstant(self.parser.previous);
 
-        self.namedVariable(Token.symbol("this"), false) catch unreachable;
+        try self.getVariable(Token.symbol("this"));
         if (self.parser.match(.LeftParen)) {
-            const argCount = self.argumentList();
-            self.namedVariable(Token.symbol("super"), false) catch unreachable;
-            self.emitUnaryOp(self.current, .SuperInvoke, name);
-            self.emitByte(self.current, argCount);
+            try self.parseExpression();
+            var arg_count: u8 = 0;
+            while (!self.parser.check(.RightParen)) {
+                arg_count += 1;
+                try self.parseExpression();
+                if (arg_count == 32) self.parser.errorAtPrevious("Cannot have more than 32 arguments.");
+            }
+            self.parser.consume(.RightParen, "Expect ')' after arguments.");
+            try self.getVariable(Token.symbol("super"));
+            try self.emitUnaryOp(self.current, .SuperInvoke, name);
+            try self.emitByte(self.current, arg_count);
         } else {
-            self.namedVariable(Token.symbol("super"), false) catch unreachable;
-            self.emitUnaryOp(self.current, .GetSuper, name);
+            try self.getVariable(Token.symbol("super"));
+            try self.emitUnaryOp(self.current, .GetSuper, name);
         }
     }
 
-    fn this(self: *Context, _: bool) void {
-        self.variable(false);
+    fn parseThis(self: *Context) Error!void {
+        try self.parseVariable();
     }
 
-    fn namedVariable(self: *Context, name: Token, canAssign: bool) !void {
-        var arg: u8 = undefined;
-        var getOp: OpCode = undefined;
-        var setOp: OpCode = undefined;
-
+    fn setVariable(self: *Context, name: Token) !void {
         if (self.resolveLocal(self.current, name)) |v| {
-            getOp = .GetLocal;
-            setOp = .SetLocal;
-            arg = v;
+            try self.emitUnaryOp(self.current, .SetLocal, v);
         } else if (self.resolveUpvalue(self.current, name)) |v| {
-            getOp = .GetUpvalue;
-            setOp = .SetUpvalue;
-            arg = v;
+            try self.emitUnaryOp(self.current, .SetUpvalue, v);
         } else {
-            getOp = .GetGlobal;
-            setOp = .SetGlobal;
-            arg = try self.identifierConstant(name);
-        }
-
-        if (canAssign and self.parser.match(.Equal)) {
-            self.expression();
-            self.emitUnaryOp(self.current, setOp, arg);
-        } else {
-            self.emitUnaryOp(self.current, getOp, arg);
+            var arg = try self.identifierConstant(name);
+            try self.emitUnaryOp(self.current, .SetGlobal, arg);
         }
     }
 
-    fn string(self: *Context, _: bool) void {
+    fn getVariable(self: *Context, name: Token) !void {
+        if (self.resolveLocal(self.current, name)) |v| {
+            try self.emitUnaryOp(self.current, .GetLocal, v);
+        } else if (self.resolveUpvalue(self.current, name)) |v| {
+            try self.emitUnaryOp(self.current, .GetUpvalue, v);
+        } else {
+            var arg = try self.identifierConstant(name);
+            try self.emitUnaryOp(self.current, .GetGlobal, arg);
+        }
+    }
+
+    fn string(self: *Context) Error!void {
         const lexeme = self.parser.previous.lexeme;
-        const str = Obj.String.copy(self.vm, lexeme[0..]) catch unreachable;
-        self.emitConstant(self.current, str.obj.value());
+        const str = try Obj.String.copy(self.vm, lexeme[0..]);
+        try self.emitConstant(self.current, str.obj.value());
     }
 
-    fn orFn(self: *Context, _: bool) void {
-        const elseJump = self.emitJump(.JumpIfFalse);
-        const endJump = self.emitJump(.Jump);
+    fn parseOr(self: *Context) Error!void {
+        const elseJump = try self.emitJump(.JumpIfFalse);
+        const endJump = try self.emitJump(.Jump);
 
         self.patchJump(elseJump);
-        self.emitOp(self.current, .Pop);
+        try self.emitOp(self.current, .Pop);
 
-        self.parsePrecedence(.Or);
+        try self.parseExpression();
         self.patchJump(endJump);
     }
 
-    fn andFn(self: *Context, _: bool) void {
-        const endJump = self.emitJump(.JumpIfFalse);
+    fn parseAnd(self: *Context) Error!void {
+        const endJump = try self.emitJump(.JumpIfFalse);
 
-        self.emitOp(self.current, .Pop);
-        self.parsePrecedence(.And);
+        try self.emitOp(self.current, .Pop);
+        try self.parseExpression();
 
         self.patchJump(endJump);
     }
 
-    fn emitJump(self: *Context, op: OpCode) usize {
-        self.emitOp(self.current, op);
-        self.emitByte(self.current, '\xFF');
-        self.emitByte(self.current, '\xFF');
+    fn emitJump(self: *Context, op: OpCode) Error!usize {
+        try self.emitOp(self.current, op);
+        try self.emitByte(self.current, '\xFF');
+        try self.emitByte(self.current, '\xFF');
 
         return self.current.chunk().code.items.len - 2;
     }
 
-    fn emitLoop(self: *Context, loopStart: i32) void {
-        self.emitOp(self.current, .Loop);
+    fn emitLoop(self: *Context, loopStart: i32) Error!void {
+        try self.emitOp(self.current, .Loop);
         const count = @as(i32, @intCast(self.current.chunk().code.items.len));
         const offset = @as(u16, @intCast(count - loopStart + 2));
         if (offset > std.math.maxInt(u16)) self.parser.errorAtPrevious("Loop body too large.");
 
-        self.emitByte(self.current, @as(u8, @truncate((offset >> 8) & 0xff)));
-        self.emitByte(self.current, @as(u8, @truncate(offset & 0xff)));
+        try self.emitByte(self.current, @as(u8, @truncate((offset >> 8) & 0xff)));
+        try self.emitByte(self.current, @as(u8, @truncate(offset & 0xff)));
     }
 
-    fn emitReturn(self: *Context) void {
+    fn emitReturn(self: *Context) Error!void {
         if (self.current.T == .Initializer) {
             // An initializer automatically returns "this".
-            self.emitOp(self.current, .GetLocal);
-            self.emitByte(self.current, 0);
-        } else {
-            self.emitOp(self.current, .Nil);
+            try self.emitOp(self.current, .GetLocal);
+            try self.emitByte(self.current, 0);
+        } else if (self.current.T == .Function) {
+            try self.emitOp(self.current, .Nil);
         }
 
-        self.emitOp(self.current, .Return);
+        try self.emitOp(self.current, .Return);
     }
 
-    fn emitByte(self: *Context, compiler: *Compiler, byte: u8) void {
-        compiler.chunk().write(byte, self.parser.previous.line) catch unreachable;
+    fn emitByte(self: *Context, compiler: *Compiler, byte: u8) Error!void {
+        try compiler.chunk().write(byte, self.parser.previous.index);
     }
 
-    fn emitOp(self: *Context, compiler: *Compiler, op: OpCode) void {
-        self.emitByte(compiler, @intFromEnum(op));
+    fn emitOp(self: *Context, compiler: *Compiler, op: OpCode) Error!void {
+        try self.emitByte(compiler, @intFromEnum(op));
     }
 
-    fn emitUnaryOp(self: *Context, compiler: *Compiler, op: OpCode, byte: u8) void {
-        self.emitByte(compiler, @intFromEnum(op));
-        self.emitByte(compiler, byte);
+    fn emitUnaryOp(self: *Context, compiler: *Compiler, op: OpCode, byte: u8) Error!void {
+        try self.emitByte(compiler, @intFromEnum(op));
+        try self.emitByte(compiler, byte);
     }
 
-    fn emitConstant(self: *Context, compiler: *Compiler, value: Value) void {
-        self.emitUnaryOp(compiler, .Constant, self.makeConstant(compiler, value));
+    fn emitConstant(self: *Context, compiler: *Compiler, value: Value) Error!void {
+        const arg = try self.makeConstant(compiler, value);
+        try self.emitUnaryOp(compiler, .Constant, arg);
     }
 
-    fn makeConstant(self: *Context, compiler: *Compiler, value: Value) u8 {
-
+    fn makeConstant(self: *Context, compiler: *Compiler, value: Value) Error!u8 {
         //TODO: Constant limit
-        return self.addConstant(compiler, value);
+        return try self.addConstant(compiler, value);
     }
 
-    pub fn addConstant(self: *Context, compiler: *Compiler, value: Value) u8 {
+    pub fn addConstant(self: *Context, compiler: *Compiler, value: Value) Error!u8 {
         self.vm.push(value);
-        compiler.chunk().constants.append(value) catch unreachable;
+        try compiler.chunk().constants.append(value);
         _ = self.vm.pop();
         return @intCast(compiler.chunk().constants.items.len - 1);
     }

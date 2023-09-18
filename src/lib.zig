@@ -1,5 +1,6 @@
 const std = @import("std");
 const Value = @import("./value.zig").Value;
+const NativeBinding = @import("./vm.zig").NativeBinding;
 const VM = @import("./vm.zig").VM;
 const Obj = @import("./object.zig").Obj;
 
@@ -9,7 +10,6 @@ pub const classModule = @import("./lib/class.zig");
 pub const instanceModule = @import("./lib/instance.zig");
 pub const listModule = @import("./lib/list.zig");
 pub const mapModule = @import("./lib/map.zig");
-pub const nullModule = @import("./lib/null.zig");
 pub const numberModule = @import("./lib/number.zig");
 pub const stringModule = @import("./lib/string.zig");
 
@@ -106,13 +106,19 @@ fn copyInstance(vm: *VM, oldInstance: *Obj.Instance) *Obj.Instance {
     return instance;
 }
 
-const NativeBinding = struct {
-    name: []const u8,
-    function: fn (vm: *VM, args: []Value) error{RuntimeError}!Value,
-};
-
 const natives = [_]NativeBinding{};
 
-fn defineAllNatives(vm: *VM) !void {
+pub fn defineAllNatives(vm: *VM) !void {
     for (natives) |n| try vm.defineNative(n.name, n.function);
+    try stdModule.io.defineAllNatives(vm);
+    try stdModule.math.defineAllNatives(vm);
+    try stdModule.net.defineAllNatives(vm);
+    try stdModule.sys.defineAllNatives(vm);
+    try boolModule.defineAllNatives(vm);
+    try classModule.defineAllNatives(vm);
+    try instanceModule.defineAllNatives(vm);
+    try listModule.defineAllNatives(vm);
+    try mapModule.defineAllNatives(vm);
+    try numberModule.defineAllNatives(vm);
+    try stringModule.defineAllNatives(vm);
 }

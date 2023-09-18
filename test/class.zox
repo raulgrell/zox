@@ -1,52 +1,22 @@
-class Fact {
-    fn init(p_a, p_b) {
-        this.a = p_a;
-        this.b = p_b;
-        print p_a;
-        print p_b;
-    }
+(class Fact
+    (init [p_a p_b]
+        (set :a p_a)
+        (set :b p_b)
+        (print ))
+    
+    (defn gg [] 
+        (var s (+ :a :b))
+        (print s)
+        (set ::a ::b)
+        (set ::b ::s)))
 
-    fn gg() {
-        var s = this.a + this.b;
-        print s;
-        this.a = this.b;
-        this.b = s;
-    }
-}
+(var fk (clock))
+(var f (Fact 0, 1))
+(var j 0)
 
-var fk = clock();
-var f = Fact(0, 1);
-var j = 0;
-while (j < 200) {
-    f.gg();
-    j = j + 1;
-}
-var ft = clock() - fk;
-print ft;
+(while (< j 200)
+    (:gg f)
+    (set j (+ j 1)))
 
-f = Fact(0,1);
-j = 0;
-while (j < 200) {
-    f.gg();
-    j = j + 1;
-}
-ft = clock() - fk;
-print ft;
-
-f = Fact(0,1);
-j = 0;
-while (j < 200) {
-    f.gg();
-    j = j + 1;
-}
-ft = clock() - fk;
-print ft;
-
-f = Fact(0,1);
-j = 0;
-while (j < 200) {
-    f.gg();
-    j = j + 1;
-}
-ft = clock() - fk;
-print ft;
+(var ft (- (clock) fk))
+(print ft)

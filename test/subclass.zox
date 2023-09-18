@@ -1,21 +1,15 @@
-class F { 
-    fn cook() {
-        print "Dunk";
-        this.decorate("sprinkles");
-        return this;
-    } 
-    fn decorate(thing) {
-        print "Add " + thing;
-        return this;
-    } 
-} 
+(defns F
+    (defn cook []
+        (print "Dunk")
+        (:decorate this "sprinkles"))
 
-class D < F {
-    fn decorate(thing) {
-        return super.decorate("icing");
-    }
-}
+    (defn decorate [thing]
+        (print "Add " thing)))
 
-var dd = D();
-var rr = dd.cook();
-print rr;
+(defns D [F]
+    (defn decorate [thing] 
+        (:decorate super "icing")))
+
+(var dd (D))
+(var rr (:cook dd))
+(print rr)

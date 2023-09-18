@@ -1,6 +1,8 @@
-var a = 1;
-var b = 2;
-var c = 3;
-var d = a + b;
-var e = a + b + c;
-var f = 1 + 2 + 3 + 4 + 5;
+(var a 1)
+(var b 2)
+(var c 3)
+(var d (+ a b))
+(var e (+ a b c))
+(var f (+ a b c 4 5))
+(class g (fn p [a] (print a)))
+(class h (fn p [x] (print x)) (fn q [y] (print y)))

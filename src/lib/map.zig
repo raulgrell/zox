@@ -1,7 +1,14 @@
 const std = @import("std");
-const VM = @import("../vm.zig").VM;
 const Value = @import("../vm.zig").Value;
 const Obj = @import("../object.zig").Obj;
+const VM = @import("../vm.zig").VM;
+const NativeBinding = @import("../vm.zig").NativeBinding;
+
+const natives = [_]NativeBinding{};
+
+pub fn defineAllNatives(vm: *VM) !void {
+    for (natives) |n| try vm.defineNative(n.name, n.function);
+}
 
 fn str(vm: *VM, args: []Value) Value {
     if (args.len != 0) {

@@ -1,20 +1,18 @@
-fn fib(n) {
-    if (n < 2) return n;
-    return fib(n - 2) + fib(n - 1);
-}
+(defn fib [n]
+    (if (< n 2) n (+ (fib (- n 2)) (fib (- n 1)))))
 
-var k = clock();
-print fib(25);
-var t = clock() - k;
-print t;
+(var k (clock))
+(print (fib 25))
+(var t (- (clock) k))
+(print t)
 
-fn ack(m, n) {
-    if (m == 0) return n + 1;
-    if (m > 0 and n == 0) return ack(m - 1, 1);
-    if (m > 0 and n > 0) return ack(m - 1, ack(m, n - 1));
-}
+(defn ack [m n]
+    (cond [
+        (= m 0) (+ n 1)
+        (and (> m 0) (= n 0) (ack (- m 1) 1))
+        (and (> m 0) (> n 0) (ack (- m 1) (ack m (- n 1))))]))
 
-var a = clock();
-print ack(3, 5);
-var ta = clock() - a;
-print ta;
+(var a (clock))
+(print (ack 3 5))
+(var ta (- (clock) a))
+(print t)

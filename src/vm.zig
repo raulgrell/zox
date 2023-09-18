@@ -19,72 +19,67 @@ pub const CallFrame = struct {
     ip: [*]u8,
     slots: u32,
 
-    pub fn readByte(self: *CallFrame) u8 {
+    fn readByte(self: *CallFrame) u8 {
         const byte = self.ip[0];
         self.ip += 1;
         return byte;
     }
 
-    pub fn readShort(self: *CallFrame) u16 {
+    fn readShort(self: *CallFrame) u16 {
         const value = @as(u16, @intCast(self.ip[0])) << 8 | self.ip[1];
         self.ip += 2;
         return value;
     }
 
-    pub fn readConstant(self: *CallFrame) Value {
+    fn readConstant(self: *CallFrame) Value {
         const chunk = self.currentChunk();
         return chunk.constants.items[self.readByte()];
     }
 
-    pub fn readString(self: *CallFrame) *Obj.String {
+    fn readString(self: *CallFrame) *Obj.String {
         const chunk = self.currentChunk();
         return chunk.constants.items[self.readByte()].asObjType(.String);
     }
 
-    pub fn currentChunk(self: CallFrame) *Chunk {
+    fn currentChunk(self: CallFrame) *Chunk {
         return &self.closure.function.chunk;
     }
+};
+
+pub const NativeBinding = struct {
+    name: []const u8,
+    function: *const Obj.Native.Fn,
 };
 
 pub const VM = struct {
     instance: Context,
     allocator: Allocator,
 
-    gca: GCAllocator,
-    grayStack: std.ArrayList(*Obj),
+    gca: GCAllocator = undefined,
+    grayStack: std.ArrayList(*Obj) = undefined,
 
-    frames: std.ArrayList(CallFrame),
-    strings: std.StringHashMap(*Obj.String),
-    globals: std.AutoHashMap(*Obj.String, Value),
-    stack: FixedCapacityStack(Value),
+    frames: std.ArrayList(CallFrame) = undefined,
+    strings: std.StringHashMap(*Obj.String) = undefined,
+    globals: std.AutoHashMap(*Obj.String, Value) = undefined,
+    stack: std.ArrayList(Value) = undefined,
 
-    objects: ?*Obj,
-    openUpvalues: ?*Obj.Upvalue,
+    objects: ?*Obj = null,
+    openUpvalues: ?*Obj.Upvalue = null,
 
-    initString: ?*Obj.String,
+    initString: ?*Obj.String = null,
 
     pub const RuntimeError = error{RuntimeError};
 
-    pub fn create(allocator: Allocator) VM {
+    pub fn create(allocator: Allocator) !VM {
         return VM{
             .instance = Context{},
             .allocator = allocator,
-            .gca = undefined,
-            .grayStack = undefined,
-            .frames = undefined,
-            .stack = undefined,
-            .strings = undefined,
-            .globals = undefined,
-            .openUpvalues = null,
-            .objects = null,
-            .initString = null,
+            .stack = std.ArrayList(Value).init(allocator),
+            .grayStack = std.ArrayList(*Obj).init(allocator),
         };
     }
 
     pub fn init(self: *VM) !void {
-        self.stack = try FixedCapacityStack(Value).init(self.allocator, config.stackMax);
-        self.grayStack = std.ArrayList(*Obj).init(self.allocator);
-
         self.gca = GCAllocator.init(self, self.allocator);
         self.frames = std.ArrayList(CallFrame).init(self.gca.allocator());
         self.strings = std.StringHashMap(*Obj.String).init(self.gca.allocator());
@@ -123,7 +118,7 @@ pub const VM = struct {
     }
 
     pub fn push(self: *VM, value: Value) void {
-        self.stack.append(value);
+        self.stack.append(value) catch unreachable;
     }
 
     pub fn pop(self: *VM) Value {
@@ -139,8 +134,8 @@ pub const VM = struct {
     }
 
     fn resetStack(self: *VM) void {
-        self.stack.resize(0) catch unreachable;
         self.openUpvalues = null;
+        self.stack.resize(0) catch unreachable;
     }
 
     pub fn freeObjects(self: *VM) void {
@@ -176,22 +171,22 @@ pub const VM = struct {
         return error.RuntimeError;
     }
 
-    fn printDebug(self: *VM) void {
+    fn printDebug(self: *VM) !void {
+        std.debug.print("\n", .{});
         const frame = self.currentFrame();
         const chunk = frame.currentChunk();
         const instruction = @intFromPtr(frame.ip) - @intFromPtr(chunk.ptr());
-        self.printStack();
+        try self.printStack();
         _ = chunk.disassembleInstruction(instruction);
-        std.debug.print("\n", .{});
     }
 
     fn printStack(self: *VM) !void {
-        for (self.stack.items, 0..) |v, i| std.debug.print("[ {}: {} ]", .{ i, v });
-        std.debug.print("\n", .{});
+        for (self.stack.items, 0..) |v, i| {
+            std.debug.print("[ {}: {} ]\n", .{ i, v });
+        }
     }
 
-    pub fn print(self: *VM, value: Value) void {
-        _ = self;
+    pub fn print(_: *VM, value: Value) void {
         std.debug.print("{}", .{value});
     }
 
@@ -343,7 +338,6 @@ pub const VM = struct {
         const method = self.peek(0);
         var class = self.peek(1).asObjType(.Class);
         _ = try class.methods.put(name, method);
-        _ = self.pop();
     }
 
     fn createClass(self: *VM, name: *Obj.String, superclass: ?*Obj.Class) !void {
@@ -355,7 +349,6 @@ pub const VM = struct {
             var it = s.methods.iterator();
             while (it.next()) |e| {
                 var slot = try class.methods.getOrPut(e.key_ptr.*);
-                // TODO: Review copying
                 slot.value_ptr.* = e.value_ptr.*;
             }
         }
@@ -380,8 +373,8 @@ pub const VM = struct {
 
     fn run(self: *VM) !void {
         while (true) {
-            comptime if (debug.trace_vm) self.printDebug();
-            const op = @as(OpCode, @enumFromInt(self.currentFrame().readByte()));
+            if (debug.trace_vm) try self.printDebug();
+            const op: OpCode = @enumFromInt(self.currentFrame().readByte());
             try self.runOp(op);
             if (op == .Return and self.frames.items.len == 0) break;
         }
@@ -393,9 +386,17 @@ pub const VM = struct {
             .True => try runTrue(self),
             .False => try runFalse(self),
             .Pop => try runPop(self),
+            .Swap => try runSwap(self),
+            .Dup => try runDup(self),
             .Constant => try runConstant(self),
             .GetLocal => try runGetLocal(self),
+            .GetLocal_0 => try runGetLocal_0(self),
+            .GetLocal_1 => try runGetLocal_1(self),
+            .GetLocal_2 => try runGetLocal_2(self),
             .SetLocal => try runSetLocal(self),
+            .SetLocal_0 => try runSetLocal_0(self),
+            .SetLocal_1 => try runSetLocal_1(self),
+            .SetLocal_2 => try runSetLocal_2(self),
             .DefineGlobal => try runDefineGlobal(self),
             .GetGlobal => try runGetGlobal(self),
             .SetGlobal => try runSetGlobal(self),
@@ -404,7 +405,7 @@ pub const VM = struct {
             .GetSuper => try runGetSuper(self),
             .Equal => try runEqual(self),
             .NotEqual => try runNotEqual(self),
-            .Add, .Subtract, .Multiply, .Divide => |o| try runBinaryMath(self, o),
+            .Add, .Subtract, .Multiply, .Divide, .Modulus, .Remainder => |o| try runBinaryMath(self, o),
             .Greater, .Less, .GreaterEqual, .LessEqual => |o| try runBinaryComparison(self, o),
             .And, .Or => |o| try runBinaryBool(self, o),
             .Not => try runNot(self),
@@ -418,6 +419,9 @@ pub const VM = struct {
             .Jump => try runJump(self),
             .Loop => try runLoop(self),
             .Call => try runCall(self),
+            .Call_0 => try runCall_0(self),
+            .Call_1 => try runCall_1(self),
+            .Call_2 => try runCall_2(self),
             .Invoke => try runInvoke(self),
             .SuperInvoke => try runSuperInvoke(self),
             .Closure => try runClosure(self),
@@ -448,6 +452,18 @@ pub const VM = struct {
         _ = self.pop();
     }
 
+    fn runSwap(self: *VM) !void {
+        const top = self.pop();
+        const next = self.pop();
+        self.push(top);
+        self.push(next);
+    }
+
+    fn runDup(self: *VM) !void {
+        const top = self.peek(0);
+        self.push(top);
+    }
+
     fn runConstant(self: *VM) !void {
         const constant = self.currentFrame().readConstant();
         self.push(constant);
@@ -459,17 +475,46 @@ pub const VM = struct {
         self.push(local);
     }
 
+    fn runGetLocal_0(self: *VM) !void {
+        const local = self.stack.items[self.currentFrame().slots + 0];
+        self.push(local);
+    }
+
+    fn runGetLocal_1(self: *VM) !void {
+        const local = self.stack.items[self.currentFrame().slots + 1];
+        self.push(local);
+    }
+
+    fn runGetLocal_2(self: *VM) !void {
+        const local = self.stack.items[self.currentFrame().slots + 2];
+        self.push(local);
+    }
+
     fn runSetLocal(self: *VM) !void {
         const slot = self.currentFrame().readByte();
         const value = self.peek(0);
         self.stack.items[self.currentFrame().slots + slot] = value;
     }
 
+    fn runSetLocal_0(self: *VM) !void {
+        const value = self.peek(0);
+        self.stack.items[self.currentFrame().slots + 0] = value;
+    }
+
+    fn runSetLocal_1(self: *VM) !void {
+        const value = self.peek(0);
+        self.stack.items[self.currentFrame().slots + 1] = value;
+    }
+
+    fn runSetLocal_2(self: *VM) !void {
+        const value = self.peek(0);
+        self.stack.items[self.currentFrame().slots + 2] = value;
+    }
+
     fn runDefineGlobal(self: *VM) !void {
         const name = self.currentFrame().readString();
         const value = self.peek(0);
         _ = try self.globals.put(name, value);
-        _ = self.pop();
     }
 
     fn runGetGlobal(self: *VM) !void {
@@ -529,6 +574,8 @@ pub const VM = struct {
             .Subtract => lhs - rhs,
             .Multiply => lhs * rhs,
             .Divide => lhs / rhs,
+            .Modulus => @mod(lhs, rhs),
+            .Remainder => @rem(lhs, rhs),
             else => unreachable,
         };
 
@@ -582,7 +629,7 @@ pub const VM = struct {
 
     fn runPrint(self: *VM) !void {
         const stdout = std.io.getStdOut().writer();
-        try stdout.print("{any}\n", .{self.pop()});
+        try stdout.print("{any}\n", .{self.peek(0)});
     }
 
     fn runNewList(self: *VM) !void {
@@ -661,6 +708,21 @@ pub const VM = struct {
     }
 
     fn runCall(self: *VM) !void {
+        const arg_count = self.currentFrame().readByte();
+        try self.callValue(self.peek(arg_count), arg_count);
+    }
+
+    fn runCall_0(self: *VM) !void {
+        const arg_count = self.currentFrame().readByte();
+        try self.callValue(self.peek(arg_count), arg_count);
+    }
+
+    fn runCall_1(self: *VM) !void {
+        const arg_count = self.currentFrame().readByte();
+        try self.callValue(self.peek(arg_count), arg_count);
+    }
+
+    fn runCall_2(self: *VM) !void {
         const arg_count = self.currentFrame().readByte();
         try self.callValue(self.peek(arg_count), arg_count);
     }
